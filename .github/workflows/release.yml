@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Disable git hooks
@@ -23,6 +23,7 @@ jobs:
         id: version
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
+          # Extract base version (v3.6.7 or v3.6.7.1 -> 3.6.7)
           VERSION=$(echo "$TAG" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
