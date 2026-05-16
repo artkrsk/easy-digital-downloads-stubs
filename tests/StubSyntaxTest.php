@@ -123,47 +123,4 @@ class StubSyntaxTest extends TestCase {
 			);
 		}
 	}
-
-	/**
-	 * EDD Software Licensing core symbols, when SL stubs are generated.
-	 */
-	public function testSoftwareLicensingSymbols(): void {
-		if ( ! defined( 'EDD_SL_VERSION' ) ) {
-			$this->markTestSkipped( 'EDD Software Licensing stubs not generated' );
-		}
-
-		$this->assertTrue(
-			class_exists( 'EDD_Software_Licensing' ),
-			'EDD_Software_Licensing class should exist'
-		);
-
-		$this->assertTrue(
-			class_exists( 'EDD_SL_Download' ),
-			'EDD_SL_Download class should exist'
-		);
-
-		$this->assertTrue(
-			class_exists( 'EDD_SL_License' ),
-			'EDD_SL_License class should exist'
-		);
-
-		$this->assertTrue(
-			function_exists( 'edd_software_licensing' ),
-			'edd_software_licensing() should exist'
-		);
-	}
-
-	/**
-	 * EDD ConvertKit core symbol, when ConvertKit stubs are generated.
-	 */
-	public function testConvertKitSymbol(): void {
-		if ( ! defined( 'EDD_CONVERTKIT_VERSION' ) ) {
-			$this->markTestSkipped( 'EDD ConvertKit stubs not generated' );
-		}
-
-		$this->assertTrue(
-			class_exists( 'EDD_ConvertKit' ),
-			'EDD_ConvertKit class should exist'
-		);
-	}
 }

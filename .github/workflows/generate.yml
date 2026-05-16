@@ -8,16 +8,6 @@ on:
         required: true
         default: 'latest'
         type: string
-      edd_sl_version:
-        description: 'EDD Software Licensing version: "skip" (CI cannot fetch the paid add-on) or "X.Y.Z" if the source is uploaded out-of-band'
-        required: true
-        default: 'skip'
-        type: string
-      edd_convertkit_version:
-        description: 'EDD ConvertKit version: "skip" (CI cannot fetch the paid add-on) or "X.Y.Z" if the source is uploaded out-of-band'
-        required: true
-        default: 'skip'
-        type: string
 
 permissions:
   contents: write
@@ -37,7 +27,6 @@ jobs:
         with:
           fetch-depth: 0  # Need full history for tags
 
-      # Easy Digital Downloads core: WordPress.org
       - name: Download Easy Digital Downloads (stable)
         run: |
           if [ "${{ inputs.edd_version }}" = "latest" ]; then
@@ -53,28 +42,18 @@ jobs:
           mv easy-digital-downloads edd-source
           echo "✓ Easy Digital Downloads downloaded"
 
-      # EDD Software Licensing and EDD ConvertKit are paid add-ons not on
-      # WordPress.org. CI can only include them when a maintainer uploads the
-      # source via secrets / a private mirror; default to skip otherwise.
-      - name: Skip notice
-        if: inputs.edd_sl_version == 'skip' && inputs.edd_convertkit_version == 'skip'
-        run: echo "ℹ️ Generating EDD core stubs only. SL/ConvertKit not bundled in this run."
-
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress --no-interaction
 
       - name: Generate stubs
         env:
           EDD_PATH: ./edd-source
-          EDD_SL_PATH: ''
-          EDD_CONVERTKIT_PATH: ''
         run: composer generate
 
       - name: Install git-cliff
         run: |
           if ! command -v git-cliff &> /dev/null; then
             ARCH=$(uname -m)
-            # Get latest release download URL for this architecture
             DOWNLOAD_URL=$(curl -s https://api.github.com/repos/orhun/git-cliff/releases/latest | \
               grep "browser_download_url.*${ARCH}.*linux-gnu.*tar.gz\"" | head -1 | cut -d '"' -f 4)
             if [ -n "$DOWNLOAD_URL" ]; then
@@ -121,13 +100,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Create branch and commit
           git checkout -b "$BRANCH"
           git add easy-digital-downloads-stubs.php CHANGELOG.md
           git commit -m "chore(stubs): update for EDD $VERSION"
           git push -u origin "$BRANCH"
 
-          # Get the commit SHA
           SHA=$(git rev-parse HEAD)
           echo "sha=$SHA" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
@@ -140,7 +117,6 @@ jobs:
         run: |
           SHA="${{ steps.branch.outputs.sha }}"
 
-          # Report success for required status check
           gh api repos/${{ github.repository }}/statuses/$SHA \
             -f state=success \
             -f context="test" \
@@ -155,7 +131,6 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           BRANCH="${{ steps.branch.outputs.branch }}"
 
-          # Create PR
           PR_URL=$(gh pr create \
             --title "chore(stubs): update for EDD $VERSION" \
             --body "Automated stub generation for Easy Digital Downloads $VERSION" \
@@ -165,7 +140,6 @@ jobs:
           echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
           echo "✅ Created PR: $PR_URL"
 
-          # Enable auto-merge (squash)
           gh pr merge "$PR_URL" --auto --squash --delete-branch
           echo "✅ Auto-merge enabled"
 
@@ -179,7 +153,6 @@ jobs:
 
           echo "Waiting for PR to be merged..."
 
-          # Wait up to 10 minutes for PR to merge
           for i in {1..60}; do
             STATE=$(gh pr view "$PR_URL" --json state --jq '.state')
             if [ "$STATE" = "MERGED" ]; then
@@ -198,12 +171,10 @@ jobs:
             exit 1
           fi
 
-          # Fetch latest to get merge commit
           git fetch origin master
           git checkout master
           git pull origin master
 
-          # Determine tag version
           BASE_TAG="v$VERSION"
           if git rev-parse "$BASE_TAG" >/dev/null 2>&1; then
             PATCH=1
@@ -217,12 +188,10 @@ jobs:
             echo "Creating tag: $TAG"
           fi
 
-          # Create and push tag
           git tag "$TAG" -m "Stubs for EDD $VERSION"
           git push origin "$TAG"
           echo "✅ Created tag: $TAG"
 
-          # Create release
           gh release create "$TAG" \
             --title "Easy Digital Downloads $VERSION Stubs" \
             --generate-notes \

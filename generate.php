@@ -18,10 +18,12 @@ function color( string $text, string $color ): string {
 	return ( $colors[ $color ] ?? '' ) . $text . $colors['reset'];
 }
 
-// Extract Version: header from a plugin main file. Returns null if the file is missing or the header can't be parsed.
-function extractPluginVersion( string $mainFile ): ?string {
+// Extract the Version: header from EDD's main plugin file.
+function extractEddVersion( string $eddPath ): string {
+	$mainFile = $eddPath . '/easy-digital-downloads.php';
+
 	if ( ! file_exists( $mainFile ) ) {
-		return null;
+		throw new \Exception( "EDD main file not found: {$mainFile}" );
 	}
 
 	$content = file_get_contents( $mainFile );
@@ -30,54 +32,15 @@ function extractPluginVersion( string $mainFile ): ?string {
 		return trim( $matches[1] );
 	}
 
-	return null;
-}
-
-// Resolve the main PHP file for a plugin directory. Some EDD plugins use
-// {slug}/{slug}.php, others (e.g. edd-software-licensing) use a different file name.
-function findPluginMainFile( string $pluginPath ): ?string {
-	$candidates = array(
-		$pluginPath . '/' . basename( $pluginPath ) . '.php',
-		$pluginPath . '/edd-software-licensing.php',
-		$pluginPath . '/edd-convertkit.php',
-		$pluginPath . '/easy-digital-downloads.php',
-	);
-
-	foreach ( $candidates as $candidate ) {
-		if ( file_exists( $candidate ) ) {
-			return $candidate;
-		}
-	}
-
-	// Fall back to scanning the directory for any PHP file with a "Plugin Name:" header.
-	if ( is_dir( $pluginPath ) ) {
-		foreach ( glob( $pluginPath . '/*.php' ) as $file ) {
-			$content = file_get_contents( $file );
-			if ( false !== strpos( $content, 'Plugin Name:' ) ) {
-				return $file;
-			}
-		}
-	}
-
-	return null;
+	throw new \Exception( "Could not extract version from {$mainFile}" );
 }
 
 // Load .env configuration (optional - CI sets env vars directly)
 $dotenv = Dotenv::createImmutable( __DIR__ );
 $dotenv->safeLoad();
 
-// Resolve paths from env (env vars beat .env)
-function resolvePath( string $envVar ): ?string {
-	$value = getenv( $envVar );
-	if ( false === $value || '' === $value ) {
-		$value = $_ENV[ $envVar ] ?? null;
-	}
-	return ( null === $value || '' === $value ) ? null : $value;
-}
-
-$eddPath           = resolvePath( 'EDD_PATH' );
-$eddSlPath         = resolvePath( 'EDD_SL_PATH' );
-$eddConvertkitPath = resolvePath( 'EDD_CONVERTKIT_PATH' );
+$envEddPath = getenv( 'EDD_PATH' );
+$eddPath    = $envEddPath ? $envEddPath : ( $_ENV['EDD_PATH'] ?? null );
 
 if ( empty( $eddPath ) ) {
 	echo color( "Error: EDD_PATH environment variable is required.\n", 'red' );
@@ -94,37 +57,11 @@ if ( ! is_dir( $eddPath ) ) {
 
 echo color( "Generating stubs from: $eddPath\n", 'yellow' );
 
-$includeSl         = $eddSlPath && is_dir( $eddSlPath );
-$includeConvertkit = $eddConvertkitPath && is_dir( $eddConvertkitPath );
-
-if ( $includeSl ) {
-	echo color( "Including EDD Software Licensing from: $eddSlPath\n", 'yellow' );
-} else {
-	echo color( "EDD_SL_PATH not provided or not found, skipping EDD Software Licensing\n", 'yellow' );
-}
-
-if ( $includeConvertkit ) {
-	echo color( "Including EDD ConvertKit from: $eddConvertkitPath\n", 'yellow' );
-} else {
-	echo color( "EDD_CONVERTKIT_PATH not provided or not found, skipping EDD ConvertKit\n", 'yellow' );
-}
-
 // 1. Generate stubs
 $finder = Finder::create()
 	->in( $eddPath )
 	->exclude( array( 'vendor', 'tests', 'node_modules', 'build', 'assets', 'languages', 'libraries', 'samples', 'templates', 'Polyfills', 'views' ) )
-	// EDD-SL bundles a copy of Parsedown directly in includes/ — skip it (markdown
-	// renderer with PHP 8 deprecation warnings, irrelevant to the EDD type surface).
-	->notName( 'Parsedown.php' )
 	->sortByName();
-
-if ( $includeSl ) {
-	$finder->in( $eddSlPath );
-}
-
-if ( $includeConvertkit ) {
-	$finder->in( $eddConvertkitPath );
-}
 
 $generator = new StubsGenerator( StubsGenerator::DEFAULT );
 $result    = $generator->generate( $finder );
@@ -139,18 +76,11 @@ $content = removeStrayCodeStatements( $content );
 // type info.
 $content = neutralizeAbstractMethods( $content );
 
-// 3. Extract versions from source
-$eddVersion           = extractPluginVersion( findPluginMainFile( $eddPath ) ?? '' );
-$eddSlVersion         = $includeSl ? extractPluginVersion( findPluginMainFile( $eddSlPath ) ?? '' ) : null;
-$eddConvertkitVersion = $includeConvertkit ? extractPluginVersion( findPluginMainFile( $eddConvertkitPath ) ?? '' ) : null;
+// 3. Extract version from source
+$eddVersion = extractEddVersion( $eddPath );
 
-if ( null === $eddVersion ) {
-	echo color( "Error: Could not extract version from EDD main plugin file.\n", 'red' );
-	exit( 1 );
-}
-
-// 4. Add self-contained constants with extracted versions
-$content = addSelfContainedConstants( $content, $eddVersion, $eddSlVersion, $eddConvertkitVersion );
+// 4. Add self-contained constants with extracted version
+$content = addSelfContainedConstants( $content, $eddVersion );
 
 // 4.5. Add empty stubs for parent classes / interfaces / traits referenced from the
 // stub file but missing from the scan (typically Doctrine\DBAL\* and other vendored
@@ -162,67 +92,10 @@ file_put_contents( __DIR__ . '/easy-digital-downloads-stubs.php', $content );
 
 echo color( "✓ Stubs generated successfully\n", 'green' );
 echo color( "  EDD: $eddVersion\n", 'green' );
-if ( $eddSlVersion ) {
-	echo color( "  EDD Software Licensing: $eddSlVersion\n", 'green' );
-}
-if ( $eddConvertkitVersion ) {
-	echo color( "  EDD ConvertKit: $eddConvertkitVersion\n", 'green' );
-}
 
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
-
-/**
- * Remove stray code statements that appear in namespace blocks outside of
- * class/function definitions. StubsGenerator occasionally includes these.
- */
-function removeStrayCodeStatements( string $content ): string {
-	$lines  = explode( "\n", $content );
-	$output = array();
-
-	foreach ( $lines as $line ) {
-		// Skip stray code that uses $this outside object context.
-		if ( preg_match( '/^\s*\$\w+\s*=.*\$this->/', $line ) ) {
-			continue;
-		}
-
-		// Skip stray apply_filters calls at top level.
-		if ( preg_match( '/^\s*\$\w+\s*=\s*apply_filters\(/', $line ) ) {
-			continue;
-		}
-
-		// Skip standalone `define(...)` and `\define(...)` calls at namespace level —
-		// these come from EDD's main plugin file and would conflict with our own
-		// self-contained constants block (which uses defined() guards).
-		if ( preg_match( '/^\s*\\\\?define\s*\(/', $line ) ) {
-			continue;
-		}
-
-		// Skip stray variable assignments at namespace level — typically template-style
-		// procedural code (metabox views, admin includes) that references variables only
-		// defined by the including context.
-		if ( preg_match( '/^\s{0,4}\$\w+\s*=/', $line ) ) {
-			continue;
-		}
-
-		$output[] = $line;
-	}
-
-	$content = implode( "\n", $output );
-
-	// Remove empty namespace blocks that only contain doc comments.
-	$content = preg_replace(
-		'/namespace\s+[\w\\\\]+\s*\{\s*\/\*\*[^*]*\*+(?:[^*\/][^*]*\*+)*\/\s*\}/s',
-		'',
-		$content
-	);
-
-	// Clean up triple+ blank lines.
-	$content = preg_replace( '/\n{3,}/', "\n\n", $content );
-
-	return $content;
-}
 
 /**
  * Iteratively detect classes / interfaces / traits the stub file references but doesn't
@@ -274,6 +147,7 @@ function fixMissingTypeStubs( string $content ): string {
 		if ( ! $has_error ) {
 			break;
 		}
+
 		$changed = false;
 
 		// Match: Class "X" not found, Interface "X" not found, Trait "X" not found.
@@ -333,10 +207,10 @@ function neutralizeAbstractMethods( string $content ): string {
 }
 
 /**
- * Inject the EDD / EDD SL / EDD ConvertKit constants at the top of the stubs file so
- * consumers don't have to define them separately to satisfy `defined(...)` checks.
+ * Inject the EDD constants at the top of the stubs file so consumers don't have to
+ * define them separately to satisfy `defined(...)` checks.
  */
-function addSelfContainedConstants( string $content, string $eddVersion, ?string $eddSlVersion = null, ?string $eddConvertkitVersion = null ): string {
+function addSelfContainedConstants( string $content, string $eddVersion ): string {
 	// Strip ONLY empty top-level namespace blocks (the placeholders StubsGenerator
 	// sometimes emits). Anything substantive in `namespace { ... }` — like EDD's huge
 	// global-namespace block containing every `edd_*` function — must be preserved,
@@ -362,41 +236,60 @@ namespace {
 	if (!defined('EDD_PLUGIN_BASE')) {
 		define('EDD_PLUGIN_BASE', plugin_basename(EDD_PLUGIN_FILE));
 	}
+}
 
 CONSTANTS;
 
-	if ( $eddSlVersion ) {
-		$constants .= <<<SL_CONSTANTS
-
-	// EDD Software Licensing constants
-	if (!defined('EDD_SL_VERSION')) {
-		define('EDD_SL_VERSION', '{$eddSlVersion}');
-	}
-	if (!defined('EDD_SL_PLUGIN_FILE')) {
-		define('EDD_SL_PLUGIN_FILE', __FILE__);
-	}
-	if (!defined('EDD_SL_PLUGIN_DIR')) {
-		define('EDD_SL_PLUGIN_DIR', plugin_dir_path(EDD_SL_PLUGIN_FILE));
-	}
-	if (!defined('EDD_SL_PLUGIN_URL')) {
-		define('EDD_SL_PLUGIN_URL', plugins_url('/', EDD_SL_PLUGIN_FILE));
-	}
-
-SL_CONSTANTS;
-	}
-
-	if ( $eddConvertkitVersion ) {
-		$constants .= <<<CK_CONSTANTS
-
-	// EDD ConvertKit constants
-	if (!defined('EDD_CONVERTKIT_VERSION')) {
-		define('EDD_CONVERTKIT_VERSION', '{$eddConvertkitVersion}');
-	}
-
-CK_CONSTANTS;
-	}
-
-	$constants .= "}\n\n";
-
 	return preg_replace( '/^(namespace )/m', $constants . '$1', $content, 1 );
+}
+
+/**
+ * Remove stray code statements that appear in namespace blocks outside of
+ * class/function definitions. StubsGenerator occasionally includes these.
+ */
+function removeStrayCodeStatements( string $content ): string {
+	$lines  = explode( "\n", $content );
+	$output = array();
+
+	foreach ( $lines as $line ) {
+		// Skip stray code that uses $this outside object context.
+		if ( preg_match( '/^\s*\$\w+\s*=.*\$this->/', $line ) ) {
+			continue;
+		}
+
+		// Skip stray apply_filters calls at top level.
+		if ( preg_match( '/^\s*\$\w+\s*=\s*apply_filters\(/', $line ) ) {
+			continue;
+		}
+
+		// Skip standalone `define(...)` and `\define(...)` calls at namespace level —
+		// these come from EDD's main plugin file and would conflict with our own
+		// self-contained constants block (which uses defined() guards).
+		if ( preg_match( '/^\s*\\\\?define\s*\(/', $line ) ) {
+			continue;
+		}
+
+		// Skip stray variable assignments at namespace level — typically template-style
+		// procedural code (metabox views, admin includes) that references variables only
+		// defined by the including context.
+		if ( preg_match( '/^\s{0,4}\$\w+\s*=/', $line ) ) {
+			continue;
+		}
+
+		$output[] = $line;
+	}
+
+	$content = implode( "\n", $output );
+
+	// Remove empty namespace blocks that only contain doc comments.
+	$content = preg_replace(
+		'/namespace\s+[\w\\\\]+\s*\{\s*\/\*\*[^*]*\*+(?:[^*\/][^*]*\*+)*\/\s*\}/s',
+		'',
+		$content
+	);
+
+	// Clean up triple+ blank lines.
+	$content = preg_replace( '/\n{3,}/', "\n\n", $content );
+
+	return $content;
 }

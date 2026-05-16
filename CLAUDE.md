@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PHPStan stubs for Easy Digital Downloads, EDD Software Licensing, and EDD ConvertKit. The stubs are auto-generated from upstream plugin source using `php-stubs/generator`.
+PHPStan stubs for Easy Digital Downloads core. The stubs are auto-generated from upstream plugin source using `php-stubs/generator`.
+
+EDD's commercial add-ons live in their own stubs repos:
+- `arts/edd-software-licensing-stubs` (https://github.com/artkrsk/edd-software-licensing-stubs)
+- `arts/edd-convertkit-stubs` (https://github.com/artkrsk/edd-convertkit-stubs)
 
 ## Commands
 
@@ -18,7 +22,7 @@ composer test:phpstan    # Run PHPStan analysis (uses tests/phpstan.neon)
 composer test:cs         # Run PHP CodeSniffer
 composer test:cs:fix     # Auto-fix coding style issues
 
-# Generate stubs (requires EDD_PATH env var; EDD_SL_PATH and EDD_CONVERTKIT_PATH are optional)
+# Generate stubs (requires EDD_PATH env var)
 composer generate
 
 # Regenerate CHANGELOG from git history (requires git-cliff installed)
@@ -53,27 +57,22 @@ Follow conventional commits for automatic CHANGELOG categorization:
 
 ## Generating Stubs
 
-The `generate.php` script requires environment variables:
-- `EDD_PATH` - Path to Easy Digital Downloads source (required)
-- `EDD_SL_PATH` - Path to EDD Software Licensing source (optional)
-- `EDD_CONVERTKIT_PATH` - Path to EDD ConvertKit source (optional)
+The `generate.php` script requires the `EDD_PATH` environment variable pointing at a local Easy Digital Downloads source tree.
 
-Set these via `.env` file (copy from `.env.example`) or export directly.
-
-**Note:** EDD Software Licensing and EDD ConvertKit are commercial add-ons distributed by Sandhills Development. CI workflows can only auto-fetch EDD core from WordPress.org; SL/ConvertKit stubs must be regenerated locally with paths set in `.env`.
+Set it via `.env` file (copy from `.env.example`) or export directly.
 
 ## Architecture
 
 ### Key Files
-- `easy-digital-downloads-stubs.php` - Generated output file containing all stubs
+- `easy-digital-downloads-stubs.php` - Generated output file containing all EDD core stubs
 - `generate.php` - Stub generation script with post-processing:
   - `removeStrayCodeStatements` — drops template-style procedural code, bare `define()` calls, and stray `$var = $this->...` assignments
   - `neutralizeAbstractMethods` — converts abstract methods to concrete stubs so child classes the generator emits without method bodies don't fatal at parse time
-  - `addSelfContainedConstants` — defines `EDD_VERSION`, `EDD_PLUGIN_*` (and `EDD_SL_VERSION`, `EDD_CONVERTKIT_VERSION` when those add-ons were included) with `defined()` guards
+  - `addSelfContainedConstants` — defines `EDD_VERSION` and `EDD_PLUGIN_*` constants with `defined()` guards
   - `fixMissingTypeStubs` — iteratively detects "Class/Interface/Trait X not found" fatals and appends empty stubs for them (catches vendored Doctrine, Symfony, Illuminate references that aren't in scan scope)
 
 ### GitHub Workflows
-- `generate.yml` — Manual workflow to generate stubs from a specific EDD version (includes CHANGELOG update + auto-release). EDD SL / ConvertKit default to "skip" since CI cannot fetch the paid add-ons.
+- `generate.yml` — Manual workflow to generate stubs from a specific EDD version (downloads from WordPress.org, includes CHANGELOG update + auto-release)
 - `check-updates.yml` — Biweekly check for new EDD releases on WordPress.org (auto-triggers `generate.yml`)
 - `integrate.yml` — CI tests on push/PR (PHPUnit + PHPStan + PHPCS)
 - `release.yml` — Creates a GitHub Release with auto-generated notes when a `v*` tag is pushed

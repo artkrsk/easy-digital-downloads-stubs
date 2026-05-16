@@ -64,9 +64,7 @@ jobs:
               workflow_id: 'generate.yml',
               ref: 'master',
               inputs: {
-                edd_version: '${{ steps.edd-core.outputs.version }}',
-                edd_sl_version: 'skip',
-                edd_convertkit_version: 'skip'
+                edd_version: '${{ steps.edd-core.outputs.version }}'
               }
             });
 
@@ -78,8 +76,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Easy Digital Downloads**: ${{ steps.edd-core.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Update Needed**: ${{ steps.check.outputs.needs_update }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> Note: EDD Software Licensing and EDD ConvertKit are commercial add-ons; their versions are not auto-checked here. To bump SL/ConvertKit stubs, dispatch \`generate.yml\` manually with the appropriate version inputs." >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ steps.check.outputs.needs_update }}" == "true" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
