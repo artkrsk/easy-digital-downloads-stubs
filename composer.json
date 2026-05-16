@@ -1,13 +1,11 @@
 {
   "name": "arts/easy-digital-downloads-stubs",
-  "description": "Comprehensive PHPStan stubs for Easy Digital Downloads, EDD Software Licensing, and EDD ConvertKit - auto-generated, self-contained, plug & play",
+  "description": "Comprehensive PHPStan stubs for Easy Digital Downloads (core) - auto-generated, self-contained, plug & play",
   "license": "GPL-3.0-or-later",
   "type": "library",
   "keywords": [
     "easy-digital-downloads",
     "edd",
-    "edd-software-licensing",
-    "edd-convertkit",
     "ide-autocomplete",
     "intellisense",
     "phpstan",

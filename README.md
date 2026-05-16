@@ -5,17 +5,17 @@
 [![PHP Version](https://img.shields.io/packagist/dependency-v/arts/easy-digital-downloads-stubs/php)](https://packagist.org/packages/arts/easy-digital-downloads-stubs)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buy-me-a-coffee)](https://buymeacoffee.com/artemsemkin)
 
-Comprehensive PHPStan stubs for Easy Digital Downloads, EDD Software Licensing, and EDD ConvertKit.
+Comprehensive PHPStan stubs for Easy Digital Downloads core.
 
-Get full IDE autocomplete, IntelliSense, and type safety when developing EDD-powered WordPress plugins, themes, and bridges.
+Get full IDE autocomplete, IntelliSense, and type safety when developing EDD-powered WordPress plugins, themes, and extensions.
 
 ## Features
 
-- Full IDE autocomplete for all EDD core, EDD Software Licensing, and EDD ConvertKit classes and functions
+- Full IDE autocomplete for all EDD core classes and functions
 - Type safety and static analysis with PHPStan
 - Catch errors before runtime when building EDD integrations and order pipelines
 - Self-contained — includes WordPress core stubs as a transitive dependency
-- Generated directly from upstream plugin source
+- Generated directly from upstream EDD source on WordPress.org
 
 ## Requirements
 
@@ -41,18 +41,13 @@ parameters:
         - vendor/arts/easy-digital-downloads-stubs/easy-digital-downloads-stubs.php
 ```
 
-The stubs include EDD core, EDD Software Licensing, and EDD ConvertKit type definitions in a single file.
-
-> **Note:** EDD Software Licensing and EDD ConvertKit are commercial add-ons. The generator only includes stubs for the add-ons you have a local copy of — `EDD_SL_PATH` and `EDD_CONVERTKIT_PATH` in `.env` are optional. Without them, only EDD core stubs are generated.
-
 ## Regenerating Stubs
 
-For contributors or to generate stubs from specific plugin versions:
+For contributors or to generate stubs from a specific EDD version:
 
 1. Copy `.env.example` to `.env`
-2. Set `EDD_PATH` to your Easy Digital Downloads installation (required)
-3. Optionally set `EDD_SL_PATH` and `EDD_CONVERTKIT_PATH` for the add-on stubs
-4. Run: `composer generate`
+2. Set `EDD_PATH` to your Easy Digital Downloads installation
+3. Run: `composer generate`
 
 ```bash
 cp .env.example .env

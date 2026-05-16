@@ -6,10 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 PHPStan stubs for Easy Digital Downloads core. The stubs are auto-generated from upstream plugin source using `php-stubs/generator`.
 
-EDD's commercial add-ons live in their own stubs repos:
-- `arts/edd-software-licensing-stubs` (https://github.com/artkrsk/edd-software-licensing-stubs)
-- `arts/edd-convertkit-stubs` (https://github.com/artkrsk/edd-convertkit-stubs)
-
 ## Commands
 
 ```bash
