@@ -4,7 +4,7 @@
 namespace {
 	// Easy Digital Downloads constants
 	if (!defined('EDD_VERSION')) {
-		define('EDD_VERSION', '3.6.7');
+		define('EDD_VERSION', '3.6.9');
 	}
 	if (!defined('EDD_PLUGIN_FILE')) {
 		define('EDD_PLUGIN_FILE', __FILE__);
@@ -17140,6 +17140,17 @@ namespace EDD\Admin\Exports\Exporters\Traits {
         {
         }
         /**
+         * Deletes any existing temp file so a new export starts clean.
+         *
+         * Call this on step 1 to prevent stale data from an interrupted previous run
+         * from being accumulated into the new export.
+         *
+         * @since 3.6.8
+         */
+        protected function reset_temp_file(): void
+        {
+        }
+        /**
          * Set up the temporary file location data.
          *
          * @since 3.3.8
@@ -22424,6 +22435,24 @@ namespace EDD\Admin\SiteHealth {
         }
     }
     /**
+     * Loads PayPal Commerce data into Site Health.
+     *
+     * @since 3.6.9
+     */
+    class PayPalCommerce
+    {
+        /**
+         * Gets the PayPal Commerce data array.
+         *
+         * @since 3.6.9
+         *
+         * @return array
+         */
+        public function get()
+        {
+        }
+    }
+    /**
      * Loads session data into Site Health.
      *
      * @since 3.1.2
@@ -24960,6 +24989,20 @@ namespace EDD\Cart\Preview {
          * @return void
          */
         public function render_button_setting($args)
+        {
+        }
+        /**
+         * Inject cart preview data into the add-to-cart AJAX response.
+         *
+         * Embeds a fresh token, timestamp, and cart state so the cart preview JS
+         * can update without making a second REST call to /contents — which fails
+         * on hosts that drop session cookies on REST requests.
+         *
+         * @since 3.6.9
+         * @param array $response The AJAX response array.
+         * @return array
+         */
+        public function add_cart_preview_data(array $response): array
         {
         }
         /**
@@ -31639,6 +31682,65 @@ namespace EDD\Database\Queries {
         }
     }
     /**
+     * Class used for querying payment tokens.
+     *
+     * @since 3.6.9
+     *
+     * @see \EDD\Database\Queries\PaymentToken::__construct() for accepted arguments.
+     */
+    class PaymentToken extends \EDD\Database\Query
+    {
+        /**
+         * Name of the database table to query.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $table_name = 'payment_tokens';
+        /**
+         * String used to alias the database table in MySQL statement.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $table_alias = 'pt';
+        /**
+         * Name of class used to setup the database schema.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $table_schema = '\EDD\Database\Schemas\PaymentTokens';
+        /**
+         * Name for a single item.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $item_name = 'payment_token';
+        /**
+         * Plural version for a group of items.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $item_name_plural = 'payment_tokens';
+        /**
+         * Callback function for turning IDs into objects.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $item_shape = '\EDD\Database\Rows\PaymentToken';
+        /**
+         * Group to cache queries and queried items in.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $cache_group = 'payment_tokens';
+    }
+    /**
      * Class used for querying items.
      *
      * @since 3.3.0
@@ -32007,6 +32109,125 @@ namespace EDD\Database\Rows {
      */
     class Order_Transaction extends \EDD\Database\Row
     {
+    }
+    /**
+     * Payment Token database row class.
+     *
+     * @since 3.6.9
+     *
+     * @property int    $id
+     * @property int    $customer_id
+     * @property string $gateway
+     * @property string $token_id
+     * @property string $gateway_customer_id
+     * @property string $type
+     * @property string $label
+     * @property string $payment_source
+     * @property string $mode
+     * @property string $status
+     * @property string $date_created
+     * @property string $date_modified
+     */
+    class PaymentToken extends \EDD\Database\Row
+    {
+        /**
+         * Payment Token ID.
+         *
+         * @since 3.6.9
+         * @var int
+         */
+        protected $id;
+        /**
+         * EDD Customer ID.
+         *
+         * @since 3.6.9
+         * @var int
+         */
+        protected $customer_id;
+        /**
+         * Gateway identifier (slug), e.g. "paypal" or "stripe".
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $gateway;
+        /**
+         * Gateway-specific token ID returned by the remote provider.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $token_id;
+        /**
+         * Gateway-specific customer ID returned by the remote provider.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $gateway_customer_id;
+        /**
+         * Payment instrument type, e.g. "card" or "paypal".
+         *
+         * Distinct from $gateway: $gateway identifies the processor (paypal,
+         * stripe), $type identifies the underlying payment instrument backing
+         * the token (card, paypal account, bank, etc.).
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $type;
+        /**
+         * Human-readable label.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $label;
+        /**
+         * JSON blob of gateway-specific display data.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $payment_source;
+        /**
+         * Live or sandbox mode.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $mode;
+        /**
+         * Token status (active or deleted).
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $status;
+        /**
+         * Date created.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $date_created;
+        /**
+         * Date modified.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        protected $date_modified;
+        /**
+         * Returns the decoded payment_source JSON.
+         *
+         * @since 3.6.9
+         *
+         * @return array|null
+         */
+        public function get_payment_source_data()
+        {
+        }
     }
 }
 namespace EDD\Database {
@@ -32961,6 +33182,48 @@ namespace EDD\Database\Schemas {
         );
     }
     /**
+     * Payment Tokens Schema Class.
+     *
+     * @since 3.6.9
+     */
+    class PaymentTokens extends \EDD\Database\Schema
+    {
+        /**
+         * Array of database column objects.
+         *
+         * @since 3.6.9
+         * @var array
+         */
+        public $columns = array(
+            // id.
+            array('name' => 'id', 'type' => 'bigint', 'length' => '20', 'unsigned' => true, 'extra' => 'auto_increment', 'primary' => true, 'sortable' => true),
+            // customer_id.
+            array('name' => 'customer_id', 'type' => 'bigint', 'length' => '20', 'unsigned' => true, 'default' => '0', 'sortable' => true),
+            // gateway — the processor slug (e.g. "paypal", "stripe").
+            array('name' => 'gateway', 'type' => 'varchar', 'length' => '20', 'default' => '', 'searchable' => true, 'sortable' => true),
+            // token_id.
+            array('name' => 'token_id', 'type' => 'varchar', 'length' => '255', 'default' => '', 'searchable' => true),
+            // gateway_customer_id.
+            array('name' => 'gateway_customer_id', 'type' => 'varchar', 'length' => '255', 'default' => '', 'searchable' => true),
+            // type — the underlying payment instrument (e.g. "card", "paypal").
+            // Distinct from the gateway column: gateway identifies the processor,
+            // type identifies the instrument the token represents.
+            array('name' => 'type', 'type' => 'varchar', 'length' => '20', 'default' => '', 'sortable' => true),
+            // label.
+            array('name' => 'label', 'type' => 'varchar', 'length' => '255', 'default' => '', 'searchable' => true),
+            // payment_source.
+            array('name' => 'payment_source', 'type' => 'longtext', 'default' => ''),
+            // mode.
+            array('name' => 'mode', 'type' => 'varchar', 'length' => '10', 'default' => 'live', 'sortable' => true),
+            // status.
+            array('name' => 'status', 'type' => 'varchar', 'length' => '20', 'default' => 'active', 'sortable' => true, 'transition' => true),
+            // date_created.
+            array('name' => 'date_created', 'type' => 'datetime', 'default' => '', 'created' => true, 'date_query' => true, 'sortable' => true),
+            // date_modified.
+            array('name' => 'date_modified', 'type' => 'datetime', 'default' => '', 'modified' => true, 'date_query' => true, 'sortable' => true),
+        );
+    }
+    /**
      * Sessions Schema Class.
      *
      * @since 3.3.0
@@ -33598,6 +33861,14 @@ namespace EDD\Database\Tables {
         public function create()
         {
         }
+    }
+    /**
+     * Setup the global "edd_payment_tokens" database table.
+     *
+     * @since 3.6.9
+     */
+    final class PaymentTokens extends \EDD\Database\Table
+    {
     }
     /**
      * Class Sessions
@@ -36657,6 +36928,18 @@ namespace EDD\Emails\Templates {
          * @return bool
          */
         public function are_base_requirements_met(): bool
+        {
+        }
+        /**
+         * Determines whether the email is enabled.
+         *
+         * The email's enabled state mirrors the login link feature setting directly,
+         * because status is not user-editable for this template.
+         *
+         * @since 3.6.9
+         * @return bool
+         */
+        protected function is_enabled(): bool
         {
         }
         /**
@@ -42108,6 +42391,91 @@ namespace EDD\Gateways\PayPal {
         }
     }
 }
+namespace EDD\Gateways\PayPal\Admin\Settings {
+    /**
+     * PaymentMethodsField class.
+     *
+     * @since 3.6.9
+     */
+    class PaymentMethodsField
+    {
+        /**
+         * Renders the payment methods multicheck.
+         *
+         * Wired to the `edd_paypal_payment_methods` action via a `type: hook`
+         * setting in `register_gateway_settings()`.
+         *
+         * @since 3.6.9
+         *
+         * @return void
+         */
+        public static function render()
+        {
+        }
+    }
+}
+namespace EDD\Gateways\PayPal {
+    /**
+     * Commerce Version class.
+     *
+     * Provides the canonical edd_paypal_commerce_version() logic, defines
+     * Connect-related PHP constants, and runs a one-time upgrade migration
+     * to pin existing 1st party stores to v2.
+     *
+     * @since 3.6.9
+     */
+    class CommerceVersion implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Returns the events this subscriber wants to listen to.
+         *
+         * @since 3.6.9
+         *
+         * @return array Hook => method mappings.
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * Returns the PayPal Commerce version for the current mode.
+         *
+         * Version v2 = legacy direct-to-PayPal integration (1st party).
+         * Version v3 = all API calls routed through EDD Connect.
+         *
+         * New installs default to v3. Existing stores with 1st party credentials
+         * are set to v2 via the upgrade migration.
+         *
+         * @since 3.6.9
+         *
+         * @return string 'v2' or 'v3'.
+         */
+        public static function get_version()
+        {
+        }
+        /**
+         * Returns the EDD Connect base URL.
+         *
+         * @since 3.6.9
+         *
+         * @return string The Connect URL.
+         */
+        public static function get_connect_url()
+        {
+        }
+        /**
+         * Upgrade migration: set commerce version to v2 for existing 1st party stores.
+         *
+         * Stores that already have PayPal client credentials are using the legacy
+         * direct-to-PayPal integration and must be pinned to v2 so they continue
+         * to work after the Connect code is introduced.
+         *
+         * @since 3.6.9
+         */
+        public function maybe_migrate()
+        {
+        }
+    }
+}
 namespace EDD\Gateways\PayPal\Exceptions {
     /**
      * API Exception.
@@ -42214,6 +42582,16 @@ namespace EDD\Gateways\PayPal {
          * @return string
          */
         public function get_checkout_label(): string
+        {
+        }
+        /**
+         * Gets the current PayPal mode based on EDD's test mode setting.
+         *
+         * @since 3.6.9
+         *
+         * @return string Either 'sandbox' or 'live'.
+         */
+        public static function get_paypal_mode(): string
         {
         }
     }
@@ -42450,6 +42828,1307 @@ namespace EDD\Gateways\PayPal {
         {
         }
     }
+    /**
+     * PayPal payment methods registry.
+     *
+     * @since 3.6.9
+     */
+    class PaymentMethods
+    {
+        /**
+         * Setting key holding the per-method toggle state.
+         *
+         * @since 3.6.9
+         */
+        const OPTION_KEY = 'paypal_payment_methods';
+        /**
+         * Funding tokens that can be toggled on or off in the SDK URL.
+         *
+         * `credit` is intentionally excluded: PayPal pairs it with `paylater`, so it
+         * is handled alongside Pay Later rather than claimed by a method directly.
+         *
+         * @since 3.6.9
+         *
+         * @var string[]
+         */
+        const TOGGLEABLE_FUNDING = array('venmo', 'card', 'paylater');
+        /**
+         * Maps method slugs to their descriptor classes, in admin display order.
+         *
+         * @since 3.6.9
+         *
+         * @return array<string,string>
+         */
+        public static function get_registered_methods(): array
+        {
+        }
+        /**
+         * Resolves a method slug to its descriptor class name.
+         *
+         * @since 3.6.9
+         *
+         * @param string $slug Method slug.
+         * @return string|null Fully-qualified class name, or null when unknown.
+         */
+        public static function get_method(string $slug): ?string
+        {
+        }
+        /**
+         * Returns whether a payment method is enabled.
+         *
+         * If the `paypal_payment_methods` setting has an explicit value for this
+         * method, that is authoritative; otherwise the supplied default applies
+         * (usually whether PayPal has granted the underlying capability).
+         *
+         * @since 3.6.9
+         *
+         * @param string $method     Method slug.
+         * @param bool   $default_on Default when no stored value exists.
+         * @return bool
+         */
+        public static function is_enabled(string $method, bool $default_on = true): bool
+        {
+        }
+        /**
+         * Computes the default on/off state for a method when no value is stored.
+         *
+         * Resolves the method's capability from the stored onboarding decision so
+         * the checkout runtime never makes a per-pageload proxy call, then defers to
+         * the descriptor for how that grant maps to a default.
+         *
+         * @since 3.6.9
+         *
+         * @param string $method Method slug.
+         * @return bool
+         */
+        public static function default_state(string $method): bool
+        {
+        }
+        /**
+         * Returns the admin-facing label for a method.
+         *
+         * @since 3.6.9
+         *
+         * @param string $slug Method slug.
+         * @return string
+         */
+        public static function get_label(string $slug): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon for a method.
+         *
+         * @since 3.6.9
+         *
+         * @param string $slug Method slug.
+         * @return string
+         */
+        public static function get_icon(string $slug): string
+        {
+        }
+        /**
+         * Assembles the SDK components needed for a set of active methods.
+         *
+         * Always includes the base `buttons` component. A method's component is only
+         * added when it is available in the current environment and, for methods that
+         * require it, the buyer client token is present.
+         *
+         * @since 3.6.9
+         *
+         * @param string[] $active_slugs     Slugs of the active methods.
+         * @param bool     $has_client_token Whether the buyer client token is available.
+         * @return string[] Ordered list of SDK component names.
+         */
+        public static function get_sdk_components(array $active_slugs, bool $has_client_token = false): array
+        {
+        }
+        /**
+         * Returns the funding tokens to add to `enable-funding` for the active methods.
+         *
+         * Only Venmo and Pay Later are explicitly enabled; the primary PayPal button
+         * and the card funding are always available without being enabled.
+         *
+         * @since 3.6.9
+         *
+         * @param string[] $active_slugs Slugs of the active methods.
+         * @return string[]
+         */
+        public static function get_enable_funding(array $active_slugs): array
+        {
+        }
+        /**
+         * Returns the funding tokens to add to `disable-funding` for the active methods.
+         *
+         * A toggleable funding token is disabled only when no active method claims it.
+         * Because the branded card button and the on-checkout card fields both claim
+         * the `card` token, it is disabled only when neither is active — the single
+         * rule that previously drifted between the SDK loader and the JS gate. PayPal
+         * pairs `credit` with `paylater`, so it is disabled alongside Pay Later.
+         *
+         * @since 3.6.9
+         *
+         * @param string[] $active_slugs Slugs of the active methods.
+         * @return string[]
+         */
+        public static function get_disable_funding(array $active_slugs): array
+        {
+        }
+        /**
+         * Returns the funding sources reported to the frontend as enabled buttons.
+         *
+         * Mirrors `disable-funding` from the buyer's perspective: the PayPal button
+         * is always present, and Venmo, Pay Later (with its paired `credit`), and the
+         * branded card button are listed when active. Read by the JS gate to decide
+         * which Buttons funding sources to render.
+         *
+         * @since 3.6.9
+         *
+         * @param string[] $active_slugs Slugs of the active methods.
+         * @return string[]
+         */
+        public static function get_button_funding_sources(array $active_slugs): array
+        {
+        }
+        /**
+         * Maps PayPal funding-source tokens to the EDD method slug that rides on them.
+         *
+         * Derived from the button-funding descriptors so the frontend resolves the
+         * funding source a rendered button belongs to without re-deriving the
+         * mapping. PayPal pairs the `credit` funding with Pay Later, so it resolves
+         * to the same slug. Keyed by funding token (matching the SDK `FUNDING.*`
+         * string values) for direct lookup on the client.
+         *
+         * @since 3.6.9
+         *
+         * @return array<string,string> Funding token => method slug.
+         */
+        public static function get_funding_slug_map(): array
+        {
+        }
+        /**
+         * Returns the active methods that require the buyer client token to load.
+         *
+         * The SDK loader uses this to decide whether to request a client token at
+         * all, instead of inferring the requirement from token presence.
+         *
+         * @since 3.6.9
+         *
+         * @param string[] $active_slugs Slugs of the active methods.
+         * @return string[]
+         */
+        public static function methods_requiring_client_token(array $active_slugs): array
+        {
+        }
+    }
+}
+namespace EDD\Gateways\PayPal\PaymentMethods {
+    // @codeCoverageIgnore
+    /**
+     * Abstract base for a PayPal payment method descriptor.
+     *
+     * @since 3.6.9
+     */
+    abstract class Method
+    {
+        /**
+         * The method slug, matching the key stored in the `paypal_payment_methods` setting.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = '';
+        /**
+         * Returns the method slug.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_id(): string
+        {
+        }
+        /**
+         * Returns the admin-facing label for the method.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string {}
+        /**
+         * Returns the admin-facing description for the method.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon for the method.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * Returns the merchant capability that gates this method's default state.
+         *
+         * One of `advanced_card`, `vaulting`, `venmo`, or null when the method has
+         * no capability gate (PayPal and Pay Later).
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_capability(): ?string
+        {
+        }
+        /**
+         * Computes the default on/off state when the merchant has no saved value.
+         *
+         * Methods with a capability gate default to whether that capability is
+         * granted; un-gated methods default on.
+         *
+         * @since 3.6.9
+         *
+         * @param bool $capability_granted Whether this method's capability is granted.
+         * @return bool
+         */
+        public static function default_state(bool $capability_granted): bool
+        {
+        }
+        /**
+         * Whether the admin toggle is hard-locked off when the capability isn't granted.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_capability_locked(): bool
+        {
+        }
+        /**
+         * Returns the tooltip text shown when the method is locked for lack of capability.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_lock_reason(): string
+        {
+        }
+        /**
+         * Returns an informational tooltip shown regardless of lock state, or null.
+         *
+         * @since 3.6.9
+         *
+         * @return array|null
+         */
+        public static function get_tooltip(): ?array
+        {
+        }
+        /**
+         * Whether the method is required and cannot be toggled off (PayPal).
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_required(): bool
+        {
+        }
+        /**
+         * Returns the PayPal SDK component the method needs, or null.
+         *
+         * One of `applepay`, `googlepay`, `card-fields`, `fastlane`, `messages`.
+         * The base `buttons` component is always loaded and is not returned here.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_sdk_component(): ?string
+        {
+        }
+        /**
+         * Returns the PayPal funding source slug this method rides on, or null.
+         *
+         * One of `paypal`, `card`, `venmo`, `paylater`. Wallet and component-based
+         * methods (Apple Pay, Google Pay, Fastlane) return null.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_funding_source(): ?string
+        {
+        }
+        /**
+         * Whether the method renders as a PayPal Buttons funding source.
+         *
+         * Distinguishes button-funding methods (which appear in the SDK funding
+         * list and `enabledFundingSources`) from standalone components and wallets.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_button_funding(): bool
+        {
+        }
+        /**
+         * Whether the buyer client token must be present for this method to load.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function requires_client_token(): bool
+        {
+        }
+        /**
+         * Whether the method is available in the current runtime environment.
+         *
+         * Defaults to true; Apple Pay overrides this to suppress itself in dev and
+         * test environments where domain verification isn't meaningful.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_available(): bool
+        {
+        }
+        /**
+         * Returns the `payment_source` key recorded for orders paid with this method.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_payment_source_key(): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Apple Pay method descriptor.
+     *
+     * @since 3.6.9
+     */
+    class ApplePay extends \EDD\Gateways\PayPal\PaymentMethods\Method
+    {
+        /**
+         * The method slug.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = 'apple_pay';
+        /**
+         * Returns the admin-facing label.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string
+        {
+        }
+        /**
+         * Returns the admin-facing description.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon.
+         *
+         * The Apple Pay mark, matching the visual treatment used elsewhere in EDD's
+         * payment-method grids. Inlined here so the PayPal descriptor owns its own
+         * mark rather than reaching into the Stripe gateway.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * Returns the capability that gates the default state.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_capability(): ?string
+        {
+        }
+        /**
+         * Returns the SDK component.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_sdk_component(): ?string
+        {
+        }
+        /**
+         * Apple Pay is suppressed in dev and test environments.
+         *
+         * Apple Pay requires a publicly-resolvable domain verified against the
+         * registered `.well-known` file and a sandbox-iCloud account on the buyer
+         * device — neither is meaningful in dev/test, so the component and button
+         * are suppressed at the source.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_available(): bool
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Branded card method descriptor.
+     *
+     * @since 3.6.9
+     */
+    class Card extends \EDD\Gateways\PayPal\PaymentMethods\Method
+    {
+        /**
+         * The method slug.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = 'card';
+        /**
+         * Returns the admin-facing label.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string
+        {
+        }
+        /**
+         * Returns the admin-facing description.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * Returns the capability that gates the default state.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_capability(): ?string
+        {
+        }
+        /**
+         * Branded card defaults on only when advanced-card vetting is NOT granted.
+         *
+         * When the merchant has advanced card, the on-checkout unbranded fields are
+         * preferred as the default, so a fresh store doesn't show two card UIs.
+         *
+         * @since 3.6.9
+         *
+         * @param bool $capability_granted Whether advanced-card vetting is granted.
+         * @return bool
+         */
+        public static function default_state(bool $capability_granted): bool
+        {
+        }
+        /**
+         * Returns the funding source slug.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_funding_source(): ?string
+        {
+        }
+        /**
+         * Branded card renders as a Buttons funding source.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_button_funding(): bool
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Fastlane method descriptor.
+     *
+     * @since 3.6.9
+     */
+    class Fastlane extends \EDD\Gateways\PayPal\PaymentMethods\Method
+    {
+        /**
+         * The method slug.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = 'fastlane';
+        /**
+         * Returns the admin-facing label.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string
+        {
+        }
+        /**
+         * Returns the admin-facing description.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * Returns the capability that gates the default state.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_capability(): ?string
+        {
+        }
+        /**
+         * Fastlane is locked off when vaulting hasn't been granted.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_capability_locked(): bool
+        {
+        }
+        /**
+         * Returns the lock reason tooltip text.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_lock_reason(): string
+        {
+        }
+        /**
+         * Returns the SDK component.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_sdk_component(): ?string
+        {
+        }
+        /**
+         * Requires the buyer client token to initialize.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function requires_client_token(): bool
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Google Pay method descriptor.
+     *
+     * @since 3.6.9
+     */
+    class GooglePay extends \EDD\Gateways\PayPal\PaymentMethods\Method
+    {
+        /**
+         * The method slug.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = 'google_pay';
+        /**
+         * Returns the admin-facing label.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string
+        {
+        }
+        /**
+         * Returns the admin-facing description.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon.
+         *
+         * The Google Pay mark, matching the visual treatment used elsewhere in EDD's
+         * payment-method grids. Inlined here so the PayPal descriptor owns its own
+         * mark rather than reaching into the Stripe gateway.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * Returns the capability that gates the default state.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_capability(): ?string
+        {
+        }
+        /**
+         * Returns the SDK component.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_sdk_component(): ?string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Pay Later method descriptor.
+     *
+     * @since 3.6.9
+     */
+    class PayLater extends \EDD\Gateways\PayPal\PaymentMethods\Method
+    {
+        /**
+         * The method slug.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = 'pay_later';
+        /**
+         * Returns the admin-facing label.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string
+        {
+        }
+        /**
+         * Returns the admin-facing description.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * Returns the SDK component used for on-checkout messaging.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_sdk_component(): ?string
+        {
+        }
+        /**
+         * Returns the funding source slug.
+         *
+         * The paired `credit` funding token is handled alongside `paylater` by the
+         * registry when assembling the SDK funding lists.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_funding_source(): ?string
+        {
+        }
+        /**
+         * Pay Later renders as a Buttons funding source.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_button_funding(): bool
+        {
+        }
+        /**
+         * Returns the informational eligibility tooltip.
+         *
+         * @since 3.6.9
+         *
+         * @return array|null
+         */
+        public static function get_tooltip(): ?array
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * PayPal method descriptor.
+     *
+     * @since 3.6.9
+     */
+    class PayPal extends \EDD\Gateways\PayPal\PaymentMethods\Method
+    {
+        /**
+         * The method slug.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = 'paypal';
+        /**
+         * Returns the admin-facing label.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string
+        {
+        }
+        /**
+         * Returns the admin-facing description.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon.
+         *
+         * Canonical three-color PayPal monogram sourced verbatim from PayPal's brand
+         * CDN at `https://www.paypalobjects.com/paypal-ui/logos/svg/paypal-mark-color.svg`.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * PayPal is required and cannot be toggled off.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_required(): bool
+        {
+        }
+        /**
+         * Returns the funding source slug.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_funding_source(): ?string
+        {
+        }
+        /**
+         * PayPal renders as a Buttons funding source.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_button_funding(): bool
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Unbranded card method descriptor.
+     *
+     * @since 3.6.9
+     */
+    class UnbrandedCard extends \EDD\Gateways\PayPal\PaymentMethods\Method
+    {
+        /**
+         * The method slug.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = 'unbranded_card';
+        /**
+         * Returns the admin-facing label.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string
+        {
+        }
+        /**
+         * Returns the admin-facing description.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * Returns the capability that gates the default state.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_capability(): ?string
+        {
+        }
+        /**
+         * Unbranded card is locked off when advanced-card processing isn't granted.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_capability_locked(): bool
+        {
+        }
+        /**
+         * Returns the lock reason tooltip text.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_lock_reason(): string
+        {
+        }
+        /**
+         * Returns the SDK component.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_sdk_component(): ?string
+        {
+        }
+        /**
+         * Returns the funding source slug.
+         *
+         * Shares the `card` funding source with the branded button, but renders as a
+         * component rather than a Buttons funding source.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_funding_source(): ?string
+        {
+        }
+        /**
+         * Requires the buyer client token to initialize the card fields.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function requires_client_token(): bool
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Venmo method descriptor.
+     *
+     * @since 3.6.9
+     */
+    class Venmo extends \EDD\Gateways\PayPal\PaymentMethods\Method
+    {
+        /**
+         * The method slug.
+         *
+         * @since 3.6.9
+         *
+         * @var string
+         */
+        protected static $id = 'venmo';
+        /**
+         * Returns the admin-facing label.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_label(): string
+        {
+        }
+        /**
+         * Returns the admin-facing description.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_description(): string
+        {
+        }
+        /**
+         * Returns the inline SVG icon.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+        /**
+         * Returns the capability that gates the default state.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_capability(): ?string
+        {
+        }
+        /**
+         * Venmo is locked off when the merchant hasn't been granted Venmo.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_capability_locked(): bool
+        {
+        }
+        /**
+         * Returns the lock reason tooltip text.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_lock_reason(): string
+        {
+        }
+        /**
+         * Returns the funding source slug.
+         *
+         * @since 3.6.9
+         *
+         * @return string|null
+         */
+        public static function get_funding_source(): ?string
+        {
+        }
+        /**
+         * Venmo renders as a Buttons funding source.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_button_funding(): bool
+        {
+        }
+    }
+}
+namespace EDD\Gateways\PayPal {
+    /**
+     * Routes PayPal Commerce payment requests through the v3 (Connect)
+     * integration. Acts as the single entry point for create-order, capture, and
+     * refund flows on v3 stores; legacy v2 stores continue to go through the
+     * procedural functions in `includes/gateways/paypal/`.
+     *
+     * @since 3.6.9
+     */
+    class Payments implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Returns the events to subscribe to.
+         *
+         * @since 3.6.9
+         *
+         * @return array
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * Filters the gateway label to show the specific payment source.
+         *
+         * On the customer-facing checkout/receipt label, displays just the instrument
+         * ("Venmo", "Apple Pay", "Google Pay", or "PayPal") so buyers see what they
+         * actually used. On the admin label, appends the instrument in parentheses
+         * (e.g. "PayPal Commerce (Venmo)") so the gateway name is preserved alongside
+         * the funding-source detail — matching the Stripe pattern.
+         *
+         * @since 3.6.9
+         *
+         * @param string     $label   The default gateway label.
+         * @param string     $gateway The gateway ID.
+         * @param Order|null $order   The order object.
+         * @return string
+         */
+        public function payment_source_checkout_label($label, $gateway, $order = null)
+        {
+        }
+        /**
+         * Renders the buyer's PayPal account email on the block-based order receipt.
+         *
+         * Mirrors the markup of the surrounding block receipt rows so styling is
+         * consistent without touching any template file (PayPal IWT requirement:
+         * the buyer's PayPal email must appear on the thank-you page).
+         *
+         * @since 3.6.9
+         *
+         * @param Order $order The order being displayed.
+         * @return void
+         */
+        public function render_payer_email_block_receipt($order)
+        {
+        }
+        /**
+         * Renders the buyer's PayPal account email on the legacy shortcode receipt.
+         *
+         * @since 3.6.9
+         *
+         * @param Order $order            The order being displayed.
+         * @param array $edd_receipt_args [edd_receipt] shortcode arguments.
+         * @return void
+         */
+        public function render_payer_email_shortcode_receipt($order, $edd_receipt_args = array())
+        {
+        }
+        /**
+         * Returns the buyer's PayPal account email for an order, when available.
+         *
+         * Returns an empty string when the order was not funded by PayPal Commerce
+         * or when no payer email was captured at order completion.
+         *
+         * @since 3.6.9
+         *
+         * @param mixed $order The order being displayed.
+         * @return string
+         */
+        protected function get_payer_email_for_receipt($order): string
+        {
+        }
+        /**
+         * Returns the slug-to-label map for the `_edd_paypal_payment_source`
+         * order meta values written at capture time.
+         *
+         * Used by the checkout-label resolver and the Payment Gateways report
+         * breakdown so both surface identical, translated labels.
+         *
+         * @since 3.6.9
+         *
+         * @return array<string,string>
+         */
+        public static function get_payment_source_labels(): array
+        {
+        }
+        /**
+         * Creates a PayPal order via Connect.
+         *
+         * Only valid for stores running the v3 integration. Buyer-facing error
+         * strings are surfaced via `edd_set_error`; detailed diagnostics (Connect
+         * error code, full response, EDD order ID) are recorded with
+         * `edd_record_gateway_error()` so support has full context when triaging.
+         *
+         * @since 3.6.9
+         *
+         * @param array $order_data The order data for PayPal (intent, purchase_units, etc.).
+         * @param int   $order_id   The EDD order ID this PayPal order is being created for.
+         * @return object|array The PayPal order response (or Connect error response on failure).
+         */
+        public static function create_order($order_data, $order_id)
+        {
+        }
+        /**
+         * Captures a PayPal order via Connect.
+         *
+         * Only valid for stores running the v3 integration. Failures are logged
+         * via `edd_debug_log` and the raw Connect response is returned so callers
+         * can branch on `V3\ConnectAPI::is_error()`.
+         *
+         * @since 3.6.9
+         *
+         * @param string $paypal_order_id The PayPal order ID to capture.
+         * @return object|array The capture response (or Connect error response on failure).
+         */
+        public static function capture_order($paypal_order_id)
+        {
+        }
+        /**
+         * Refunds a captured transaction via Connect.
+         *
+         * Only valid for stores running the v3 integration. When `$refund_object`
+         * is supplied and its total does not match the original order's total,
+         * a partial refund is requested.
+         *
+         * @since 3.6.9
+         *
+         * @param Order      $order         The original order being refunded.
+         * @param Order|null $refund_object Optional. The EDD refund order, when one already exists.
+         * @return array|false The refund response on success, false if the order has no transaction ID.
+         */
+        public static function refund_order(\EDD\Orders\Order $order, ?\EDD\Orders\Order $refund_object = null)
+        {
+        }
+        /**
+         * Verifies a Connect webhook signature (for v3 relayed webhooks).
+         *
+         * @since 3.6.9
+         *
+         * @param string $body      The raw request body.
+         * @param array  $headers   The request headers (server format: HTTP_X_EDD_*).
+         * @param string $hmac_key  The store's HMAC key.
+         * @return bool True if the signature is valid.
+         */
+        public static function verify_connect_webhook_signature($body, $headers, $hmac_key)
+        {
+        }
+        /**
+         * Determines if the current webhook request is from the Connect service (v3).
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_connect_webhook()
+        {
+        }
+        /**
+         * Gets the HMAC key for webhook verification.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public static function get_webhook_hmac_key()
+        {
+        }
+        /**
+         * Checks if a v3 store is ready to accept payments.
+         *
+         * For v3 stores, we check that the store ID and HMAC key are set,
+         * and that a merchant ID is stored.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_v3_ready()
+        {
+        }
+    }
     class Token
     {
         /**
@@ -42498,6 +44177,1252 @@ namespace EDD\Gateways\PayPal {
          * @return string
          */
         public function token()
+        {
+        }
+    }
+}
+namespace EDD\Gateways\PayPal\V3\Admin {
+    /**
+     * Account
+     *
+     * @since 3.6.9
+     */
+    class Account
+    {
+        /**
+         * Constructor.
+         *
+         * Resolves the current mode, fetches Connect status, runs the
+         * license-resync self-heal when applicable, and materializes the
+         * per-mode merchant row.
+         *
+         * @since 3.6.9
+         */
+        public function __construct()
+        {
+        }
+        /**
+         * Returns the resolved PayPal mode (live or sandbox).
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public function get_mode()
+        {
+        }
+        /**
+         * Whether a merchant ID is known for the current mode.
+         *
+         * Used by the settings page to decide whether to render the
+         * refresh-merchant-status button alongside the disconnect link.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public function has_merchant_id()
+        {
+        }
+        /**
+         * Overall status severity for the connection.
+         *
+         * @since 3.6.9
+         *
+         * @return string One of `success`, `warning`, or `error`.
+         */
+        public function get_status()
+        {
+        }
+        /**
+         * Renders the full status list as a `<ul>`.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        public function render()
+        {
+        }
+    }
+}
+namespace EDD\Gateways\PayPal\V3\ApplePay {
+    /**
+     * Apple Pay domain-association handler.
+     *
+     * @since 3.6.9
+     */
+    class DomainAssociation
+    {
+        /**
+         * Well-known path Apple requires for verification.
+         *
+         * @since 3.6.9
+         */
+        const WELL_KNOWN_PATH = '.well-known/apple-developer-merchantid-domain-association';
+        /**
+         * Option storing the host name the file was last written for.
+         *
+         * @since 3.6.9
+         */
+        const HOST_OPTION = 'edd_paypal_applepay_domain';
+        /**
+         * Option storing the most recent registration error message, if any.
+         *
+         * @since 3.6.9
+         */
+        const ERROR_OPTION = 'edd_paypal_applepay_domain_error';
+        /**
+         * Transient storing the file contents fetched from the Connect service.
+         *
+         * Used as a fallback when the docroot copy isn't readable (PHP serving
+         * path) and to avoid re-fetching from the Connect service on every admin page load.
+         *
+         * @since 3.6.9
+         */
+        const CONTENT_TRANSIENT = 'edd_paypal_applepay_domain_association';
+        /**
+         * Returns true when the docroot copy of the association file exists
+         * AND the stored host matches the current request host.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function is_valid(): bool
+        {
+        }
+        /**
+         * Checks whether the static file exists in the document root.
+         *
+         * @since 3.6.9
+         *
+         * @return bool
+         */
+        public static function file_exists_in_docroot(): bool
+        {
+        }
+        /**
+         * Fetches the association file content from the Connect service and writes it to
+         * the document root, then registers the domain with PayPal so Apple
+         * can verify against it.
+         *
+         * @since 3.6.9
+         *
+         * @throws \RuntimeException When fetch, filesystem write, or registration fails.
+         *
+         * @return void
+         */
+        public static function install(): void
+        {
+        }
+        /**
+         * Tears down all local Apple Pay domain-association state.
+         *
+         * Called when the merchant deletes their PayPal connection — the
+         * stored host, any recorded registration error, and the docroot file
+         * all belong to the previous merchant's Apple Pay registration on
+         * PayPal's side. Leaving them behind would either suppress the
+         * re-registration that a fresh connection needs (host-match short-
+         * circuit) or serve a stale .well-known file the new merchant can't
+         * vouch for.
+         *
+         * The PayPal-issued file content is not merchant-specific, so we
+         * intentionally leave the CONTENT_TRANSIENT alone — re-installing
+         * after a fresh connect doesn't need a fresh fetch.
+         *
+         * @since 3.6.9
+         *
+         * @return void
+         */
+        public static function uninstall(): void
+        {
+        }
+        /**
+         * Forces PayPal to re-validate the domain with Apple.
+         *
+         * PayPal's register-domain endpoint short-circuits with
+         * `DOMAIN_ALREADY_REGISTERED` once a domain has been registered for the
+         * merchant — that's normally what we want, but it also means a failed
+         * Apple-side validation never gets retried. This flow drops the
+         * registration on PayPal, clears local state, and re-installs from
+         * scratch so PayPal genuinely re-calls Apple's validation endpoint.
+         *
+         * Order matters: deregister on PayPal first so a failure leaves local
+         * state untouched (no drift). Only after PayPal confirms removal do we
+         * uninstall locally and then re-install — that way a mid-flight failure
+         * always leaves both sides either fully populated or both empty, never
+         * half-registered.
+         *
+         * Intended to be invoked manually by an admin (e.g. via a settings-page
+         * action), not from any customer-facing code path.
+         *
+         * @since 3.6.9
+         *
+         * @throws \RuntimeException When deregistration or re-install fails.
+         *
+         * @return void
+         */
+        public static function reverify(): void
+        {
+        }
+        /**
+         * Returns the cached association file contents.
+         *
+         * Falls back to fetching from the Connect service when the transient is missing.
+         *
+         * @since 3.6.9
+         *
+         * @return string The file content, or an empty string on failure.
+         */
+        public static function get_cached_content(): string
+        {
+        }
+        /**
+         * Records a registration error so it can be surfaced as an admin notice.
+         *
+         * @since 3.6.9
+         *
+         * @param string $message Error message.
+         * @return void
+         */
+        public static function record_error(string $message): void
+        {
+        }
+    }
+    /**
+     * DomainSubscriber class.
+     *
+     * @since 3.6.9
+     */
+    class DomainSubscriber implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Subscribed events.
+         *
+         * @since 3.6.9
+         *
+         * @return array
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * AJAX handler — drops PayPal's existing domain registration, clears
+         * local Apple Pay state, and re-installs from scratch so PayPal
+         * genuinely re-calls Apple's `.well-known` domain validation.
+         *
+         * Intended as an admin-only escape hatch from a "PayPal cached the
+         * registration but Apple never validated" state. Never invoked from
+         * customer-facing code paths.
+         *
+         * @since 3.6.9
+         *
+         * @return void
+         */
+        public function ajax_reverify()
+        {
+        }
+        /**
+         * Verifies the domain-association file is in place and registered with
+         * PayPal. Runs on every admin page load (cheap when already valid).
+         *
+         * @since 3.6.9
+         *
+         * @return void
+         */
+        public function verify_domain()
+        {
+        }
+        /**
+         * Intercepts `/.well-known/apple-developer-merchantid-domain-association`
+         * requests when the static docroot file is missing, streams the cached
+         * content directly from PHP, and exits.
+         *
+         * @since 3.6.9
+         *
+         * @return void
+         */
+        public function maybe_serve_file()
+        {
+        }
+        /**
+         * Renders an admin notice when the most recent registration attempt
+         * failed, so the store owner can take action.
+         *
+         * @since 3.6.9
+         *
+         * @return void
+         */
+        public function render_error_notice()
+        {
+        }
+    }
+}
+namespace EDD\Gateways\PayPal\V3 {
+    // @codeCoverageIgnore
+    /**
+     * CaptureStatus class.
+     *
+     * @since 3.6.9
+     */
+    class CaptureStatus
+    {
+        /**
+         * Maps a PayPal capture status to an EDD order status.
+         *
+         * Returns an empty string for an empty or unrecognized status; callers
+         * treat that as a failure rather than a silent success.
+         *
+         * @since 3.6.9
+         *
+         * @param string $paypal_status The capture `status` from the PayPal response.
+         * @return string The EDD order status, or '' when the status is unknown.
+         */
+        public static function to_edd_status($paypal_status)
+        {
+        }
+    }
+    /**
+     * ConnectAPI class.
+     *
+     * Handles communication with EDD Connect, including HMAC authentication,
+     * idempotency key generation, and standardized error handling.
+     *
+     * @since 3.6.9
+     */
+    class ConnectAPI
+    {
+        /**
+         * Constructor.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode Optional. 'sandbox' or 'live'. Defaults to current mode.
+         */
+        public function __construct($mode = '')
+        {
+        }
+        /**
+         * Gets the HTTP response code from the last request.
+         *
+         * @since 3.6.9
+         *
+         * @return int The HTTP response code.
+         */
+        public function get_last_response_code()
+        {
+        }
+        /**
+         * Makes a GET request to the Connect service.
+         *
+         * @since 3.6.9
+         *
+         * @param string $endpoint The API endpoint path (e.g., '/v3/paypal/orders/123').
+         * @return array|WP_Error The decoded response body, or WP_Error on failure.
+         */
+        public function get($endpoint)
+        {
+        }
+        /**
+         * Makes a POST request to the Connect service.
+         *
+         * @since 3.6.9
+         *
+         * @param string $endpoint        The API endpoint path.
+         * @param array  $body            The request body data.
+         * @param string $idempotency_key Optional. A deterministic idempotency key. When
+         *                                provided, it is sent instead of a random per-request
+         *                                key so the proxy can collapse a re-fired charge onto
+         *                                the original result instead of charging twice.
+         * @return array|WP_Error The decoded response body, or WP_Error on failure.
+         */
+        public function post($endpoint, $body = array(), $idempotency_key = '')
+        {
+        }
+        /**
+         * Makes a DELETE request to the Connect service.
+         *
+         * @since 3.6.9
+         *
+         * @param string $endpoint The API endpoint path.
+         * @param array  $body     Optional. The request body data.
+         * @return array|WP_Error The decoded response body, or WP_Error on failure.
+         */
+        public function delete($endpoint, $body = array())
+        {
+        }
+        /**
+         * Makes an HMAC-signed request to the Connect service.
+         *
+         * @since 3.6.9
+         *
+         * @param string $method          HTTP method (GET, POST, DELETE).
+         * @param string $endpoint        The API endpoint path.
+         * @param array  $body            Optional. The request body for POST requests.
+         * @param string $idempotency_key Optional. A deterministic idempotency key for mutating
+         *                                requests. Defaults to a random per-request key.
+         * @return array|WP_Error The decoded response body, or WP_Error on failure.
+         */
+        public function make_request($method, $endpoint, $body = array(), $idempotency_key = '')
+        {
+        }
+        /**
+         * Makes an unauthenticated POST request to register a store.
+         *
+         * This endpoint does not use HMAC authentication.
+         *
+         * @since 3.6.9
+         *
+         * @param array $body The registration request body.
+         * @return array|WP_Error The decoded response body.
+         */
+        public function register_store($body)
+        {
+        }
+        /**
+         * Sets the store ID.
+         *
+         * @since 3.6.9
+         *
+         * @param string $store_id The store UUID.
+         */
+        public function set_store_id($store_id)
+        {
+        }
+        /**
+         * Sets the HMAC key.
+         *
+         * @since 3.6.9
+         *
+         * @param string $hmac_key The HMAC shared secret.
+         */
+        public function set_hmac_key($hmac_key)
+        {
+        }
+        /**
+         * Checks if the response contains an error.
+         *
+         * @since 3.6.9
+         *
+         * @param array $response The decoded Connect response.
+         * @return bool True if the response contains an error.
+         */
+        public static function is_error($response)
+        {
+        }
+        /**
+         * Extracts the error code from a Connect error response.
+         *
+         * @since 3.6.9
+         *
+         * @param array $response The decoded Connect response.
+         * @return string The error code, or empty string if not an error.
+         */
+        public static function get_error_code($response)
+        {
+        }
+        /**
+         * Extracts the error message from a Connect error response.
+         *
+         * @since 3.6.9
+         *
+         * @param array $response The decoded Connect response.
+         * @return string The error message, or empty string if not an error.
+         */
+        public static function get_error_message($response)
+        {
+        }
+        /**
+         * Extracts the PayPal debug ID from a Connect error response.
+         *
+         * @since 3.6.9
+         *
+         * @param array $response The decoded Connect response.
+         * @return string|null The PayPal debug ID, or null.
+         */
+        public static function get_paypal_debug_id($response)
+        {
+        }
+    }
+    /**
+     * Credentials class.
+     *
+     * Handles HMAC key and store ID persistence. All methods are static so any
+     * collaborator can read/write credentials without needing an instance.
+     *
+     * @since 3.6.9
+     */
+    class Credentials
+    {
+        /**
+         * Returns the decrypted HMAC key for a mode.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @return string The HMAC key, or empty string when none is stored.
+         */
+        public static function get_hmac_key(string $mode): string
+        {
+        }
+        /**
+         * Returns the previous (outgoing) HMAC key while its grace window is open.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @return string The previous HMAC key, or empty string when none/expired.
+         */
+        public static function get_previous_hmac_key(string $mode): string
+        {
+        }
+        /**
+         * Encrypts and stores the HMAC key for a mode, alongside a fingerprint.
+         *
+         * The fingerprint lets validate_hmac_key() detect encryption-key (salt) changes
+         * that would leave the ciphertext undecryptable.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @param string $key  The plaintext HMAC key.
+         * @return void
+         */
+        public static function store_hmac_key(string $mode, string $key): void
+        {
+        }
+        /**
+         * Detects whether the locally-stored HMAC key is still usable.
+         *
+         * Side-effect-free check comparing the stored key fingerprint against the
+         * current one. Returns false when they no longer match.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @return bool True when the key is usable (or there is nothing to validate).
+         */
+        public static function validate_hmac_key(string $mode): bool
+        {
+        }
+        /**
+         * Returns the store ID for a mode.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @return string The store ID, or empty string when none is stored.
+         */
+        public static function get_store_id(string $mode): string
+        {
+        }
+        /**
+         * Stores the store ID for a mode.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode     'sandbox' or 'live'.
+         * @param string $store_id The store UUID.
+         * @return void
+         */
+        public static function store_store_id(string $mode, string $store_id): void
+        {
+        }
+        /**
+         * Deletes all credential options for a mode.
+         *
+         * Removes the HMAC key (active and previous), its fingerprint and expiry,
+         * and the store ID. Called on reconnect so a clean re-registration can begin.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @return void
+         */
+        public static function forget(string $mode): void
+        {
+        }
+    }
+    /**
+     * Customer class.
+     *
+     * @since 3.6.9
+     */
+    class Customer
+    {
+        /**
+         * Customer meta key for the PayPal vault customer ID (live).
+         *
+         * @since 3.6.9
+         */
+        const META_KEY_LIVE = '_edd_paypal_vault_customer_id';
+        /**
+         * Customer meta key for the PayPal vault customer ID (sandbox).
+         *
+         * @since 3.6.9
+         */
+        const META_KEY_TEST = '_edd_paypal_vault_customer_id_test';
+        /**
+         * Gets the PayPal vault customer ID for an EDD customer in the active mode.
+         *
+         * @since 3.6.9
+         *
+         * @param int $customer_id EDD customer ID.
+         * @return string|false The PayPal customer ID or false.
+         */
+        public static function get_id($customer_id)
+        {
+        }
+        /**
+         * Saves the PayPal vault customer ID for an EDD customer if not already stored.
+         *
+         * @since 3.6.9
+         *
+         * @param int    $customer_id        EDD customer ID.
+         * @param string $paypal_customer_id PayPal vault customer ID.
+         * @return void
+         */
+        public static function save_id($customer_id, $paypal_customer_id)
+        {
+        }
+        /**
+         * Returns the meta key for the active PayPal mode.
+         *
+         * @since 3.6.9
+         *
+         * @return string The customer meta key for the active mode.
+         */
+        public static function get_meta_key(): string
+        {
+        }
+    }
+    /**
+     * KeyRotation class.
+     *
+     * Manages HMAC key lifecycle operations for the PayPal V3 Connect integration.
+     *
+     * @since 3.6.9
+     */
+    class KeyRotation
+    {
+        /**
+         * Ensures a usable HMAC key is present, recovering from the proxy when needed.
+         *
+         * Non-disruptive: recovery re-establishes the same key, so in-flight webhooks
+         * keep validating. Returns true when a usable key is present after the call.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode Optional. 'sandbox' or 'live'. Defaults to current mode.
+         * @return bool True when a usable key is present (already valid or recovered).
+         */
+        public static function ensure(string $mode = ''): bool
+        {
+        }
+        /**
+         * Rotates the HMAC key: requests a new key and retires the old one.
+         *
+         * The outgoing key is kept for a grace window so webhooks already in
+         * flight keep validating during cutover.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode Optional. 'sandbox' or 'live'. Defaults to current mode.
+         * @return true|\WP_Error True on success, WP_Error otherwise.
+         */
+        public static function rotate(string $mode = '')
+        {
+        }
+        /**
+         * Cuts over to a new HMAC key, retaining the outgoing key for a grace window.
+         *
+         * Shared by the store-initiated and proxy-initiated rotation paths. Public so
+         * Merchant::get_status() can call it when the Connect service piggybacks a new
+         * key onto a merchant-status response.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode    'sandbox' or 'live'.
+         * @param string $new_key The new plaintext HMAC key.
+         * @return void
+         */
+        public static function cut_over(string $mode, string $new_key): void
+        {
+        }
+    }
+    /**
+     * Merchant class.
+     *
+     * Handles merchant profile storage (save/forget) and merchant-status fetching
+     * with a per-mode transient cache.
+     *
+     * @since 3.6.9
+     */
+    class Merchant
+    {
+        /**
+         * Transient TTL for cached merchant-status responses (4 hours).
+         *
+         * Long enough that idle admin page loads don't repeatedly hit PayPal's
+         * partner-integration endpoint; short enough that vetting or capability
+         * changes show up within a workday without a manual refresh.
+         *
+         * @since 3.6.9
+         */
+        const STATUS_TTL = 4 * HOUR_IN_SECONDS;
+        /**
+         * Persists every merchant profile field present in a response.
+         *
+         * This is the canonical write path for merchant profile data. Calling it
+         * from both onboarding completion and status refresh ensures all fields stay
+         * in sync regardless of which response path triggered the update.
+         *
+         * Fields written when present in $response:
+         *   - merchant_id        → edd_paypal_{mode}_merchant_id
+         *   - primary_email      → edd_paypal_{mode}_seller_email (deleted when absent/empty)
+         *   - capabilities       → edd_paypal_{mode}_capabilities
+         *   - vaulting_available → edd_paypal_{mode}_vaulting_available
+         *   - partner_client_id  → edd_paypal_{mode}_partner_client_id
+         *   - advanced_card_available (derived from product_details vetting status)
+         *
+         * @since 3.6.9
+         *
+         * @param array  $response The response array from the Connect service.
+         * @param string $mode     'sandbox' or 'live'.
+         * @return void
+         */
+        public static function save(array $response, string $mode): void
+        {
+        }
+        /**
+         * Gets the merchant status from the Connect service, with a per-mode transient cache.
+         *
+         * Pass $force_refresh = true to bypass the cache (used by the admin
+         * "Re-Check Payment Status" button and onboarding-completion paths where
+         * we always want the freshest values).
+         *
+         * After a successful fetch, all profile fields in the response are persisted
+         * via save() so every field stays in sync on every poll.
+         *
+         * @since 3.6.9
+         *
+         * @param string $merchant_id   PayPal merchant ID.
+         * @param string $mode          Optional. 'sandbox' or 'live'. Defaults to current mode.
+         * @param bool   $force_refresh Optional. Bypass the cache. Default false.
+         * @return array|\WP_Error
+         */
+        public static function get_status(string $merchant_id, string $mode = '', bool $force_refresh = false)
+        {
+        }
+        /**
+         * Returns the transient key used to cache the merchant-status response for a given mode.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @return string
+         */
+        public static function get_status_cache_key(string $mode): string
+        {
+        }
+        /**
+         * Clears the cached merchant-status response for a given mode.
+         *
+         * Called when onboarding completes, when a store reconnects, and from the
+         * admin "Re-Check Payment Status" handler so the next read pulls fresh data.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @return void
+         */
+        public static function clear_status_cache(string $mode): void
+        {
+        }
+        /**
+         * Deletes all merchant profile options for a mode.
+         *
+         * Called on reconnect so stale merchant data doesn't persist into the next
+         * onboarding session.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode 'sandbox' or 'live'.
+         * @return void
+         */
+        public static function forget(string $mode): void
+        {
+        }
+    }
+    /**
+     * MerchantStatus class.
+     *
+     * @since 3.6.9
+     */
+    class MerchantStatus
+    {
+        /**
+         * Gets the vetting status for a specific product from a merchant status response.
+         *
+         * @since 3.6.9
+         *
+         * @param array  $merchant_status The merchant status response from the Connect service.
+         * @param string $product_name    The product name to look up (e.g., 'PPCP', 'ADVANCED_VAULTING').
+         * @return string|null The vetting status or null if not found.
+         */
+        public static function get_product_vetting_status($merchant_status, $product_name)
+        {
+        }
+        /**
+         * Determines whether one of the named capabilities is granted and active.
+         *
+         * PayPal returns granted capabilities in the merchant-status response under
+         * a `capabilities[]` array (per-account features such as Pay Later or
+         * Venmo). Capability naming varies by region and API version, so accept
+         * multiple possible names for a single conceptual capability.
+         *
+         * @since 3.6.9
+         *
+         * @param array        $merchant_status The merchant status response from the Connect service.
+         * @param string|array $capability_name A capability name or an array of acceptable names.
+         * @return bool True if any of the named capabilities is present with status `ACTIVE`.
+         */
+        public static function has_capability($merchant_status, $capability_name): bool
+        {
+        }
+        /**
+         * Gets a human-readable label for a PayPal vetting status.
+         *
+         * @since 3.6.9
+         *
+         * @param string $vetting_status The vetting status from PayPal.
+         * @return string
+         */
+        public static function get_vetting_status_label($vetting_status)
+        {
+        }
+    }
+    /**
+     * Onboarding class.
+     *
+     * Manages the v3 (Connect) onboarding flow: registering the store,
+     * retrieving the PayPal signup link, completing onboarding, and reconnecting.
+     *
+     * @since 3.6.9
+     */
+    class Onboarding implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Option key for the stored onboarding tracking ID.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        const TRACKING_ID_OPTION = 'edd_paypal_%s_tracking_id';
+        /**
+         * Returns the events this subscriber wants to listen to.
+         *
+         * @since 3.6.9
+         *
+         * @return array Hook => method mappings.
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * Completes the v3 onboarding after the merchant returns from PayPal.
+         *
+         * Sends the merchant ID to the Connect service, which uses Auth-Assertion JWT
+         * with EDD's partner credentials to register the webhook and return
+         * capabilities. No OAuth auth_code is needed for the 3rd party model.
+         *
+         * @since 3.6.9
+         *
+         * @param string $merchant_id PayPal merchant/seller ID.
+         * @return array|\WP_Error Onboarding result with capabilities.
+         */
+        public static function complete_onboarding($merchant_id)
+        {
+        }
+        /**
+         * Reconnects by clearing v2 credentials and resetting for v3.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode Optional. 'sandbox' or 'live'. Defaults to current mode.
+         */
+        public static function reconnect($mode = '')
+        {
+        }
+        /**
+         * Checks if the store is fully onboarded for v3.
+         *
+         * @since 3.6.9
+         *
+         * @param string $mode Optional. 'sandbox' or 'live'. Defaults to current mode.
+         * @return bool True if all required v3 options are present.
+         */
+        public static function is_v3_onboarded($mode = '')
+        {
+        }
+        /**
+         * AJAX: Register store and get signup link.
+         *
+         * @since 3.6.9
+         */
+        public function ajax_register_store()
+        {
+        }
+        /**
+         * Handles the PayPal redirect after onboarding completes.
+         *
+         * PayPal redirects the parent browser window back to the admin settings
+         * page with ?merchantIdInPayPal=XXX. This handler picks it up on the
+         * `load-download_page_edd-settings` hook and completes onboarding.
+         *
+         * @since 3.6.9
+         */
+        public function handle_paypal_redirect()
+        {
+        }
+        /**
+         * AJAX: Reconnect by clearing old credentials.
+         *
+         * @since 3.6.9
+         */
+        public function ajax_reconnect()
+        {
+        }
+        /**
+         * AJAX: Refresh merchant status.
+         *
+         * @since 3.6.9
+         */
+        public function ajax_get_merchant_status()
+        {
+        }
+        /**
+         * AJAX: Rotate the store's HMAC credentials.
+         *
+         * @since 3.6.9
+         */
+        public function ajax_rotate_hmac()
+        {
+        }
+        /**
+         * Gets the EDD license key for store registration.
+         *
+         * Resolves the key through \EDD\Licensing\License so multisite installs
+         * (where the Pro key is a network option) work correctly, and falls back
+         * to the highest active pass license when no Pro key is entered — that
+         * covers customers running on a pass who never explicitly saved the Pro
+         * key but are still licensed.
+         *
+         * @since 3.6.9
+         *
+         * @return string The license key, or empty string if no license is active.
+         */
+        public static function get_license_key()
+        {
+        }
+        /**
+         * Forwards the store's current Pro license whenever it's saved or removed, keeping the connection in sync.
+         *
+         * @since 3.6.9
+         *
+         * @return void
+         */
+        public static function sync_license_to_connect()
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * PaymentSource class.
+     *
+     * @since 3.6.9
+     */
+    class PaymentSource
+    {
+        /**
+         * Builds the `attributes` block for a vault-with-purchase payment source.
+         *
+         * Returned verbatim under `payment_source.{paypal|card}.attributes` on a v3
+         * order request. The attribute shape is identical for both source keys; the
+         * caller is responsible for placing it under the correct key and for any
+         * source-specific siblings (e.g. the PayPal source's `experience_context`
+         * and `billing_plan`).
+         *
+         * The `usage_type` of MERCHANT designates the token for merchant-initiated
+         * recurring charges; `store_in_vault` ON_SUCCESS only vaults once the capture
+         * succeeds.
+         *
+         * @since 3.6.9
+         *
+         * @param string $paypal_customer_id Existing PayPal vault customer ID for a
+         *                                   returning buyer, or empty for a new buyer.
+         * @return array The `attributes` block.
+         */
+        public static function vault_attributes(string $paypal_customer_id = ''): array
+        {
+        }
+    }
+    /**
+     * Resolves buyer identity and issues auth cookies for REST-based PayPal flows.
+     *
+     * @since 3.6.9
+     */
+    class PurchaseUser
+    {
+        /**
+         * Resolves the buyer's user data from a REST request's form_data.
+         *
+         * Runs the standard EDD user-validation pipeline the same way
+         * PurchaseData::start() does for a normal form submission. Covers four
+         * cases: already logged in, new registration, login, and guest checkout.
+         *
+         * @since 3.6.9
+         *
+         * @param array  $form_data  Raw form data from the REST request body.
+         * @param string $email      Already-sanitized buyer email.
+         * @param string $first_name Already-sanitized first name.
+         * @param string $last_name  Already-sanitized last name.
+         * @param array  $address    Already-sanitized address array.
+         * @return array|\WP_Error Array with 'valid_data' and 'user' keys on success, or WP_Error on failure.
+         */
+        public static function resolve(array $form_data, $email, $first_name, $last_name, array $address)
+        {
+        }
+        /**
+         * Issues an auth cookie after capture if the order's buyer just registered
+         * or logged in during this request.
+         *
+         * The cookie set during the /create response may be stripped by proxy
+         * layers (e.g. Cloudflare APO); repeating it on the capture response —
+         * which is the one the browser navigates away from — ensures the buyer
+         * lands on the success page logged in.
+         *
+         * Deliberate side effect: for proxy-stripped buyers wp_signon() already
+         * fires wp_login server-side during create_order(); this call fires it a
+         * second time on capture. Duplicate audit-log entries and last-login stamps
+         * are the trade-off for reliable session delivery in that scenario.
+         *
+         * @since 3.6.9
+         *
+         * @param int $order_id EDD order ID.
+         * @return void
+         */
+        public static function maybe_log_in_after_capture($order_id)
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * TransactionRecorder class.
+     *
+     * @since 3.6.9
+     */
+    class TransactionRecorder
+    {
+        /**
+         * Records the capture transaction and transaction-ID note on an order.
+         *
+         * No-ops when the transaction id is empty. The id is sanitized here so
+         * callers may pass it straight from the PayPal response.
+         *
+         * @since 3.6.9
+         *
+         * @param int    $order_id       EDD order ID.
+         * @param string $transaction_id PayPal capture ID.
+         * @return void
+         */
+        public static function record($order_id, $transaction_id)
+        {
+        }
+    }
+    /**
+     * Vault class.
+     *
+     * Handles saving, retrieving, and charging PayPal vault tokens through EDD's
+     * payment tokens system. Customer-facing management of saved payment methods
+     * is intentionally not exposed: letting a buyer delete a token from EDD would
+     * silently break any subscription billed against it (the same pitfall the
+     * Stripe gateway hit when it moved from customer-level cards to
+     * per-subscription payment methods). Tokens are stored automatically at
+     * checkout when PayPal returns vault data, used by Recurring for renewals,
+     * and removed via the upstream VAULT.PAYMENT-TOKEN.DELETED webhook.
+     *
+     * @since 3.6.9
+     */
+    class Vault
+    {
+        /**
+         * Maximum number of saved tokens to list for a customer.
+         *
+         * @since 3.6.9
+         */
+        const TOKEN_LIST_LIMIT = 100;
+        /**
+         * Creates a vault setup token for standalone vaulting.
+         *
+         * @since 3.6.9
+         *
+         * @param int    $customer_id EDD customer ID.
+         * @param string $return_url  URL to redirect after approval.
+         * @param string $cancel_url  URL to redirect on cancel.
+         * @param array  $args        Optional. Additional request shaping:
+         *                            - 'brand_name'   string Merchant name displayed on the PayPal approval screen.
+         *                            - 'billing_plan' array  Billing plan describing the recurring schedule the buyer is agreeing to.
+         * @return array|false Setup token response or false on failure.
+         */
+        public static function create_setup_token($customer_id, $return_url, $cancel_url, $args = array())
+        {
+        }
+        /**
+         * Creates a payment token from an approved setup token.
+         *
+         * @since 3.6.9
+         *
+         * @param string $setup_token_id The approved setup token ID.
+         * @param int    $customer_id    EDD customer ID.
+         * @return array|false Payment token response or false on failure.
+         */
+        public static function create_payment_token($setup_token_id, $customer_id)
+        {
+        }
+        /**
+         * Saves a payment token to the local database from a PayPal response.
+         *
+         * @since 3.6.9
+         *
+         * @param array $response    The PayPal payment token response.
+         * @param int   $customer_id EDD customer ID.
+         * @return int|false The local token ID or false on failure.
+         */
+        public static function save_token_from_response($response, $customer_id)
+        {
+        }
+        /**
+         * Extracts, stamps, and persists vault data from a v3 capture response.
+         *
+         * The single capture-side vault path shared by every v3 flow (smart-button
+         * checkout, Fastlane, and the on-checkout card fields). It stamps the vault
+         * ids onto order meta, persists the token row for a logged-in buyer, and
+         * fires `edd_paypal_v3_order_vaulted` — replacing the near-identical blocks
+         * those flows each carried, where the vault customer.id handling had drifted.
+         *
+         * MUST run before the order is moved to a complete status, because
+         * `maybe_create_vault_subscriptions` reads the `_edd_paypal_vault_id` order
+         * meta stamped here to seed subscription meta synchronously.
+         *
+         * @since 3.6.9
+         *
+         * @param int    $order_id       EDD order ID.
+         * @param string $transaction_id PayPal capture ID for this order.
+         * @param array  $response       Capture response, normalized to an array.
+         * @return array {
+         *     The extracted vault ids (empty strings when the capture did not vault).
+         *
+         *     @type string $vault_id          PayPal vault token ID.
+         *     @type string $vault_customer_id PayPal vault customer ID.
+         * }
+         */
+        public static function persist_from_capture($order_id, $transaction_id, array $response)
+        {
+        }
+        /**
+         * Extracts the vault token and customer ids from a capture response.
+         *
+         * PayPal places vault details under `payment_source.{type}.attributes.vault`.
+         * The PayPal wallet source is checked before the card source so a wallet
+         * capture that also carries card data resolves to the wallet token; the id
+         * and the customer id are always read from the same source so they can't be
+         * mixed across payment sources.
+         *
+         * Shared so EDD Recurring's PAYMENT.CAPTURE.COMPLETED webhook reads vault
+         * data from the same definition the synchronous capture paths use. Callers
+         * holding the resource as a stdClass (e.g. the webhook payload) must
+         * normalize it to an array first.
+         *
+         * @since 3.6.9
+         *
+         * @param array $response Capture response, normalized to an array.
+         * @return array {
+         *     @type string $vault_id          PayPal vault token ID, or empty string.
+         *     @type string $vault_customer_id PayPal vault customer ID, or empty string.
+         * }
+         */
+        public static function extract_vault_ids(array $response)
+        {
+        }
+        /**
+         * Gets active payment tokens for an EDD customer.
+         *
+         * @since 3.6.9
+         *
+         * @param int    $customer_id EDD customer ID.
+         * @param string $gateway     Gateway identifier. Default 'paypal'.
+         * @return PaymentToken[] Array of payment tokens.
+         */
+        public static function get_tokens_for_customer($customer_id, $gateway = 'paypal')
+        {
+        }
+        /**
+         * Gets a single payment token by its gateway token ID.
+         *
+         * @since 3.6.9
+         *
+         * @param string $token_id The gateway token ID.
+         * @return PaymentToken|false The token object or false.
+         */
+        public static function get_token_by_token_id($token_id)
+        {
+        }
+        /**
+         * Soft-deletes a payment token locally and deletes from PayPal vault.
+         *
+         * @since 3.6.9
+         *
+         * @param int $local_token_id The local database token ID.
+         * @return bool True on success, false on failure.
+         */
+        public static function delete_token($local_token_id)
+        {
+        }
+        /**
+         * Charges a vaulted payment method (merchant-initiated transaction).
+         *
+         * @since 3.6.9
+         *
+         * @param array $args {
+         *     Required arguments.
+         *
+         *     @type string $vault_id                       PayPal payment token ID.
+         *     @type string $amount                         Decimal string (e.g., '29.99').
+         *     @type string $currency_code                  ISO 4217 currency code.
+         *     @type string $custom_id                      EDD subscription or order ID.
+         *     @type string $description                    Charge description.
+         *     @type string $previous_transaction_reference Previous capture ID for recurring.
+         * }
+         * @return array|\WP_Error Capture response on success, WP_Error carrying
+         *                          the Connect error code/message on failure.
+         */
+        public static function charge_vault($args)
+        {
+        }
+        /**
+         * Detects the payment method type from the payment source.
+         *
+         * Shared so EDD Recurring's vault-trial flow resolves the source type from
+         * the same definition Pro uses when saving a token.
+         *
+         * @since 3.6.9
+         *
+         * @param array $response The PayPal payment token response.
+         * @return string 'paypal' or 'card'.
+         */
+        public static function detect_type_from_payment_source($response)
         {
         }
     }
@@ -42683,6 +45608,11 @@ namespace EDD\Gateways\PayPal\Webhooks\Events {
     }
 }
 namespace EDD\Gateways\PayPal\Webhooks {
+    /**
+     * Webhook Handler For PayPal.
+     *
+     * @since 3.6.9
+     */
     class Webhook_Handler
     {
         /**
@@ -42709,10 +45639,12 @@ namespace EDD\Gateways\PayPal\Webhooks {
         /**
          * Handles the current request.
          *
-         * @param \WP_REST_Request $request
+         * @param \WP_REST_Request $request The REST API Request object.
          *
          * @since 2.11
          * @return \WP_REST_Response
+         *
+         * @throws \Exception Upon failure, an exception is thrown.
          */
         public function handle_request(\WP_REST_Request $request)
         {
@@ -42727,11 +45659,32 @@ namespace EDD\Gateways\PayPal\Webhooks {
         {
         }
         /**
+         * Resolves the PayPal environment a Connect webhook event belongs to.
+         *
+         * Prefers the explicit `X-EDD-PayPal-Mode` header sent by the Connect service. When
+         * the header is missing (older Connect versions), falls back to matching
+         * the `X-EDD-Merchant-ID` header against the merchant IDs stored locally
+         * for sandbox vs live. Returns an empty string when neither resolves —
+         * downstream handlers should treat that as "unknown" rather than guess.
+         *
+         * Intentionally not based on `edd_is_test_mode()`: webhooks arrive in
+         * their own request context independent of the admin's UI toggle, and a
+         * live event must validate even while the admin is viewing the sandbox
+         * tab (and vice versa).
+         *
+         * @since 3.6.9
+         *
+         * @return string 'sandbox', 'live', or '' when the mode cannot be resolved.
+         */
+        public static function resolve_event_mode()
+        {
+        }
+        /**
          * Handles the webhook test request.
          *
          * @since 3.2.0
          *
-         * @param \WP_REST_Request $request
+         * @param \WP_REST_Request $request The Reqeust object.
          */
         public function handle_test(\WP_REST_Request $request)
         {
@@ -46029,6 +48982,52 @@ namespace EDD\Gateways\Stripe\PaymentMethods {
          * Gets the icon for the payment method.
          *
          * @since 3.3.5
+         * @return string
+         */
+        public static function get_icon(): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Blik class.
+     */
+    class Blik extends \EDD\Gateways\Stripe\PaymentMethods\Method
+    {
+        /**
+         * The ID of the payment method.
+         *
+         * @since 3.6.8
+         * @var string
+         */
+        protected static $id = 'blik';
+        /**
+         * The supported currencies for the payment method.
+         *
+         * @since 3.6.8
+         * @var array
+         */
+        public static $currencies = array('PLN');
+        /**
+         * The supported countries for the payment method.
+         *
+         * @since 3.6.8
+         * @var array
+         */
+        public static $countries = array('at', 'be', 'bg', 'hr', 'cy', 'cz', 'dk', 'ee', 'fi', 'fr', 'de', 'gr', 'hu', 'is', 'ie', 'it', 'lv', 'li', 'lt', 'lu', 'mt', 'nl', 'no', 'pl', 'pt', 'ro', 'sk', 'si', 'es', 'se');
+        /**
+         * Gets the label for the payment method.
+         *
+         * @since 3.6.8
+         * @return string
+         */
+        public static function get_label()
+        {
+        }
+        /**
+         * Gets the icon for the payment method.
+         *
+         * @since 3.6.8
          * @return string
          */
         public static function get_icon(): string
@@ -51270,6 +54269,40 @@ namespace EDD\Orders {
 }
 namespace EDD\Orders\Refunds {
     /**
+     * Class FormParser
+     *
+     * @since 3.6.9
+     */
+    class FormParser
+    {
+        /**
+         * Parses the order-item rows out of the deserialised refund-form payload.
+         *
+         * Discards rows that have no quantity or that have neither subtotal nor
+         * tax — mirroring the gate the EDD admin uses so the resulting array can
+         * be passed straight into `edd_refund_order()` or the refund Validator.
+         *
+         * @since 3.6.9
+         *
+         * @param array $form_data Parsed form data from the refund submission.
+         * @return array
+         */
+        public static function parse_order_items(array $form_data): array
+        {
+        }
+        /**
+         * Parses the adjustment rows out of the deserialised refund-form payload.
+         *
+         * @since 3.6.9
+         *
+         * @param array $form_data Parsed form data from the refund submission.
+         * @return array
+         */
+        public static function parse_adjustments(array $form_data): array
+        {
+        }
+    }
+    /**
      * Class to build a number for a refund.
      *
      * @since 3.3.0
@@ -51895,6 +54928,41 @@ namespace EDD\REST\Controllers {
         }
     }
     /**
+     * Fastlane controller class.
+     *
+     * Handles Fastlane card payment processing via REST API.
+     *
+     * @since 3.6.9
+     */
+    class Fastlane
+    {
+        /**
+         * Constructor.
+         *
+         * @since 3.6.9
+         * @param Security $security Security instance.
+         */
+        public function __construct(\EDD\REST\Security $security)
+        {
+        }
+        /**
+         * Process a Fastlane card payment.
+         *
+         * Receives a single-use token from the Fastlane card component,
+         * creates a pending EDD order, sends the order to PayPal with
+         * payment_source.card.single_use_token for immediate capture,
+         * and completes the EDD order.
+         *
+         * @since 3.6.9
+         *
+         * @param \WP_REST_Request $request Request object.
+         * @return \WP_REST_Response|\WP_Error
+         */
+        public function process_payment($request)
+        {
+        }
+    }
+    /**
      * LogPruning Controller class
      *
      * @since 3.6.4
@@ -51937,6 +55005,51 @@ namespace EDD\REST\Controllers {
          * @return \WP_REST_Response
          */
         public function dismiss_notification($request)
+        {
+        }
+    }
+    /**
+     * UnbrandedCard controller class.
+     *
+     * @since 3.6.9
+     */
+    class UnbrandedCard
+    {
+        /**
+         * Constructor.
+         *
+         * @since 3.6.9
+         * @param Security $security Security instance.
+         */
+        public function __construct(\EDD\REST\Security $security)
+        {
+        }
+        /**
+         * Creates the EDD order and a PayPal order for the Card Fields component.
+         *
+         * The PayPal order is created with 3-D Secure forced on the card source.
+         * No card data is sent here — the Card Fields SDK attaches the card and
+         * runs the 3DS challenge after this returns the order ID.
+         *
+         * @since 3.6.9
+         *
+         * @param \WP_REST_Request $request Request object.
+         * @return \WP_REST_Response|\WP_Error
+         */
+        public function create($request)
+        {
+        }
+        /**
+         * Inspects the 3-D Secure result, then captures the order.
+         *
+         * Returns true only when a required 3-D Secure challenge was attempted and failed; every other result proceeds.
+         *
+         * @since 3.6.9
+         *
+         * @param \WP_REST_Request $request Request object.
+         * @return \WP_REST_Response|\WP_Error
+         */
+        public function capture($request)
         {
         }
     }
@@ -52077,6 +55190,40 @@ namespace EDD\REST\Routes {
         }
     }
     /**
+     * Fastlane class.
+     *
+     * Handles REST API route registration for PayPal Fastlane operations.
+     *
+     * @since 3.6.9
+     */
+    class Fastlane extends \EDD\REST\Routes\Route
+    {
+        /**
+         * REST API base.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        const BASE = 'fastlane';
+        /**
+         * Constructor.
+         *
+         * @since 3.6.9
+         */
+        public function __construct()
+        {
+        }
+        /**
+         * Register routes.
+         *
+         * @since 3.6.9
+         * @return void
+         */
+        public function register()
+        {
+        }
+    }
+    /**
      * LogPruning class
      *
      * Handles REST API route registration for log pruning operations.
@@ -52182,6 +55329,38 @@ namespace EDD\REST\Routes {
         {
         }
     }
+    /**
+     * UnbrandedCard class.
+     *
+     * @since 3.6.9
+     */
+    class UnbrandedCard extends \EDD\REST\Routes\Route
+    {
+        /**
+         * REST API base.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        const BASE = 'unbranded-card';
+        /**
+         * Constructor.
+         *
+         * @since 3.6.9
+         */
+        public function __construct()
+        {
+        }
+        /**
+         * Register routes.
+         *
+         * @since 3.6.9
+         * @return void
+         */
+        public function register()
+        {
+        }
+    }
 }
 namespace EDD\REST {
     /**
@@ -52201,6 +55380,27 @@ namespace EDD\REST {
          * @return bool|\WP_Error True if valid, WP_Error otherwise.
          */
         public function validate_token($request)
+        {
+        }
+        /**
+         * Validate the EDD cart token from a request, without requiring a WP REST nonce.
+         *
+         * The cart token is an HMAC over a timestamp using the site secret — it is
+         * stateless and behaves identically for logged-in and guest buyers. WP
+         * nonces, by contrast, depend on session cookies and become flaky for
+         * anonymous checkout (page caching, mid-flow session changes, etc.).
+         *
+         * Use this permission_callback for REST endpoints that primarily serve the
+         * checkout flow where guest users are expected. `validate_token()` remains
+         * the right choice for endpoints that should require an authenticated WP
+         * session in addition to the cart token.
+         *
+         * @since 3.6.9
+         *
+         * @param \WP_REST_Request $request Request object.
+         * @return bool|\WP_Error True if valid, WP_Error otherwise.
+         */
+        public function validate_cart_token($request)
         {
         }
         /**
@@ -54227,6 +57427,85 @@ namespace EDD\Reports\Data\File_Downloads {
     }
 }
 namespace EDD\Reports\Data\Gateways {
+    /**
+     * PayPalPaymentMethods class.
+     *
+     * @since 3.6.9
+     */
+    class PayPalPaymentMethods extends \EDD\Admin\List_Table
+    {
+        /**
+         * Constructor.
+         *
+         * @since 3.6.9
+         */
+        public function __construct()
+        {
+        }
+        /**
+         * Primary column name.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        protected function get_primary_column_name()
+        {
+        }
+        /**
+         * Renders columns.
+         *
+         * @since 3.6.9
+         *
+         * @param array  $item        Row data.
+         * @param string $column_name Column key.
+         * @return string
+         */
+        public function column_default($item, $column_name)
+        {
+        }
+        /**
+         * Columns.
+         *
+         * @since 3.6.9
+         *
+         * @return array
+         */
+        public function get_columns()
+        {
+        }
+        /**
+         * Disable bulk actions for this read-only report.
+         *
+         * @since 3.6.9
+         *
+         * @param string $which Tablenav location.
+         * @return void
+         */
+        public function bulk_actions($which = '')
+        {
+        }
+        /**
+         * Builds the table rows.
+         *
+         * @since 3.6.9
+         *
+         * @return array
+         */
+        public function get_data()
+        {
+        }
+        /**
+         * Prepares items for rendering.
+         *
+         * @since 3.6.9
+         *
+         * @return void
+         */
+        public function prepare_items()
+        {
+        }
+    }
     /**
      * StripePaymentMethods Class
      *
@@ -56759,6 +60038,45 @@ namespace EDD\Reports\Endpoints\Tables {
          * Gets the class name for the table.
          *
          * @since 3.5.1
+         * @return string
+         */
+        protected function get_class_name(): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * PayPal Payment Methods Table.
+     *
+     * @since 3.6.9
+     */
+    class PayPalPaymentMethods extends \EDD\Reports\Endpoints\Tables\Table
+    {
+        /**
+         * Returns the endpoint ID used by the report registry.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        protected function get_id(): string
+        {
+        }
+        /**
+         * Returns the rendered table label, including the active date range.
+         *
+         * @since 3.6.9
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Returns the fully-qualified class name for the data backing this table.
+         *
+         * @since 3.6.9
+         *
          * @return string
          */
         protected function get_class_name(): string
@@ -60771,6 +64089,16 @@ namespace EDD\Telemetry {
         public function get()
         {
         }
+        /**
+         * Gets the telemetry collector instances.
+         *
+         * @since 3.6.8
+         *
+         * @return array
+         */
+        protected function get_collectors(): array
+        {
+        }
     }
     /**
      * Class Environment
@@ -60924,6 +64252,16 @@ namespace EDD\Telemetry {
          * @return bool
          */
         protected function tracking_allowed()
+        {
+        }
+        /**
+         * Setup the data that is going to be tracked.
+         *
+         * @since 3.1.1
+         *
+         * @return void
+         */
+        protected function setup_data()
         {
         }
         /**
@@ -62512,6 +65850,20 @@ namespace EDD\Utils {
         public static function decrypt(string $token): ?string
         {
         }
+        /**
+         * Returns a fingerprint of the current encryption key.
+         *
+         * Lets callers detect that the encryption key has changed without storing
+         * the key itself.
+         *
+         * @since 3.6.9
+         *
+         * @param string $label Domain-separation label.
+         * @return string|null Lowercase hex fingerprint, or null when unavailable.
+         */
+        public static function key_fingerprint(string $label = 'edd-hmac-fingerprint'): ?string
+        {
+        }
     }
     class EnvironmentChecker
     {
@@ -62870,6 +66222,21 @@ namespace EDD\Utils {
         {
         }
         /**
+         * Creates a directory.
+         *
+         * Wraps WP_Filesystem's mkdir when the direct filesystem is available, and
+         * falls back to native PHP `mkdir()` with recursive creation otherwise.
+         *
+         * @since 3.6.9
+         *
+         * @param string    $path  Path to the directory to create.
+         * @param int|false $chmod Octal permission mode for the new directory. Defaults to `FS_CHMOD_DIR`.
+         * @return bool True on success, false on failure.
+         */
+        public static function mkdir($path, $chmod = false)
+        {
+        }
+        /**
          * Get the file contents as an array.
          *
          * Returns the file contents as an array. Each line in the file is an element in the array.
@@ -62912,6 +66279,34 @@ namespace EDD\Utils {
          * @return string The sanitized file path.
          */
         public static function sanitize_file_path($file)
+        {
+        }
+    }
+    /**
+     * Identifier class.
+     *
+     * @since 3.6.9
+     */
+    class Identifier
+    {
+        /**
+         * Option key for the persisted per-install UUID.
+         *
+         * @since 3.6.9
+         * @var string
+         */
+        const SITE_UUID_OPTION = 'edd_site_uuid';
+        /**
+         * Gets a persistent UUID for this EDD install.
+         *
+         * Generates the identifier on first use and persists it so it stays stable
+         * for the life of the install.
+         *
+         * @since 3.6.9
+         *
+         * @return string The persisted UUID for this install.
+         */
+        public static function get_site_uuid(): string
         {
         }
     }
@@ -63484,6 +66879,113 @@ namespace EDD\Utils {
         }
     }
 }
+namespace EDD\Utils\Validators\FileType {
+    // @codeCoverageIgnore
+    /**
+     * Base file type validator.
+     *
+     * @since 3.6.9
+     */
+    abstract class Base
+    {
+        /**
+         * Allowed filename extension(s) for this format.
+         *
+         * Returned as an `extension => mime` map suitable for wp_check_filetype().
+         *
+         * @since 3.6.9
+         *
+         * @return array
+         */
+        protected function extensions(): array {}
+        /**
+         * MIME types accepted as this format's content.
+         *
+         * @since 3.6.9
+         *
+         * @return string[]
+         */
+        protected function mime_types(): array {}
+        /**
+         * Validates that a file matches this format.
+         *
+         * Checks the filename extension and the file's contents against the format's
+         * accepted values.
+         *
+         * @since 3.6.9
+         *
+         * @param string $path     Absolute path to the file on disk (e.g. an upload tmp_name).
+         * @param string $filename The filename whose extension is validated.
+         * @return bool True only when the extension and contents are both valid.
+         */
+        public function is_valid(string $path, string $filename): bool
+        {
+        }
+        /**
+         * Determines whether the file's contents match an accepted MIME type.
+         *
+         * @since 3.6.9
+         *
+         * @param string $path Absolute path to the file on disk.
+         * @return bool
+         */
+        protected function is_mime_allowed(string $path): bool
+        {
+        }
+        /**
+         * Optional, format-specific validation hook.
+         *
+         * Overload in a subclass to add structural checks beyond extension and MIME.
+         * Defaults to passing.
+         *
+         * @since 3.6.9
+         *
+         * @param string $path Absolute path to the file on disk.
+         * @return bool
+         */
+        protected function validate_contents(string $path): bool
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Validates CSV uploads.
+     *
+     * @since 3.6.9
+     */
+    final class CSV extends \EDD\Utils\Validators\FileType\Base
+    {
+        /**
+         * MIME types accepted as CSV content.
+         *
+         * A CSV authored in a plain-text editor is detected as text/plain, so it is
+         * accepted alongside the CSV-specific types.
+         *
+         * @since 3.6.9
+         * @var string[]
+         */
+        const MIME_TYPES = array('text/csv', 'text/comma-separated-values', 'text/plain', 'text/anytext', 'application/csv', 'application/excel', 'application/vnd.ms-excel', 'application/vnd.msexcel');
+    }
+    // @codeCoverageIgnore
+    /**
+     * Validates JSON uploads.
+     *
+     * @since 3.6.9
+     */
+    final class JSON extends \EDD\Utils\Validators\FileType\Base
+    {
+        /**
+         * Real MIME types accepted as JSON content.
+         *
+         * A JSON file authored in a plain-text editor is commonly detected as
+         * text/plain, so it is accepted alongside the JSON-specific types.
+         *
+         * @since 3.6.9
+         * @var string[]
+         */
+        const MIME_TYPES = array('application/json', 'text/json', 'text/plain');
+    }
+}
 namespace EDD\Utils\Validators {
     /**
      * Rate Limiter class.
@@ -63536,6 +67038,44 @@ namespace EDD\Utils\Validators {
          * @return int Seconds until reset, or 0 if no active window.
          */
         public function get_remaining_lockout_seconds(string $identifier): int
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Salts validator class.
+     *
+     * @since 3.6.9
+     */
+    final class Salts
+    {
+        /**
+         * WordPress salt constants a secure install must define.
+         *
+         * @since 3.6.9
+         * @var string[]
+         */
+        const REQUIRED_SALTS = array('AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT');
+        /**
+         * Minimum acceptable length for a configured salt.
+         *
+         * @since 3.6.9
+         * @var int
+         */
+        const MIN_SALT_LENGTH = 32;
+        /**
+         * Determines whether the install defines complete, unique WordPress salts.
+         *
+         * Every required salt must be defined, a non-empty string, free of the
+         * wp-config sample default, at least MIN_SALT_LENGTH characters, and
+         * distinct from the others.
+         *
+         * @since 3.6.9
+         *
+         * @return bool True when every required salt is defined, non-default, long
+         *              enough, and distinct.
+         */
+        public static function are_secure(): bool
         {
         }
     }
@@ -64793,6 +68333,30 @@ namespace EDD\Gateways\PayPal\Admin {
     {
     }
     /**
+     * Renders the v2 (1st party) connect button.
+     *
+     * @since 3.6.9
+     *
+     * @param string $mode Translated mode label.
+     */
+    function connect_settings_field_v2($mode)
+    {
+    }
+    /**
+     * Renders the v3 (Connect) connect button.
+     *
+     * The button triggers an AJAX call to register the store with the Connect service
+     * and retrieve a PayPal signup link. On success, the PayPal minibrowser
+     * opens for merchant onboarding.
+     *
+     * @since 3.6.9
+     *
+     * @param string $mode Translated mode label.
+     */
+    function connect_settings_field_v3($mode)
+    {
+    }
+    /**
      * Single function to make a request to get the onboarding URL and nonce.
      *
      * Previously we did this in process_connect method, but we've moved away from the AJAX useage of this
@@ -64850,6 +68414,19 @@ namespace EDD\Gateways\PayPal\Admin {
      * @return void
      */
     function get_account_info()
+    {
+    }
+    /**
+     * Returns v3 account status information.
+     *
+     * Builds the connection status panel via the Account renderer, which
+     * queries EDD Connect and falls back to wp_options when the
+     * Connect service is unreachable.
+     *
+     * @since 3.6.9
+     * @return void
+     */
+    function get_account_info_v3()
     {
     }
     /**
@@ -65307,6 +68884,22 @@ namespace EDD\Gateways\PayPal {
     function _is_item_total_mismatch($response)
     {
     }
+    /**
+     * Determines whether a host is acceptable to PayPal as a Fastlane domain.
+     *
+     * PayPal's `/v3/paypal/sdk-token` rejects the whole request with
+     * `invalid_domain` if any single entry in the `domains` array is not a
+     * publicly-resolvable hostname. Local development hosts like `multisite.local`
+     * or `site.test`, raw IP addresses, and bare hostnames all fail validation.
+     *
+     * @since 3.6.9
+     *
+     * @param string $domain The host (no protocol, no path).
+     * @return bool True if the domain is in a format PayPal will accept.
+     */
+    function is_public_paypal_domain($domain)
+    {
+    }
 }
 /**
  * PayPal Commerce Gateway Filters
@@ -65433,6 +69026,47 @@ namespace EDD\Gateways\PayPal\IPN {
  * @since      2.11
  */
 namespace EDD\Gateways\PayPal {
+    /**
+     * Pre-flights a paypal_commerce refund submission before EDD creates the local
+     * refund record.
+     *
+     * Hooks `wp_ajax_edd_process_refund_form` ahead of EDD's own AJAX handler so
+     * we can call PayPal first and surface any gateway-side failure directly to
+     * the admin modal. On success the Connect response is cached so the post-flight
+     * `edd_refund_order` callback reuses it instead of double-charging the API.
+     *
+     * @since 3.6.9
+     *
+     * @return void
+     */
+    function preflight_refund_submission()
+    {
+    }
+    /**
+     * Returns the seller-facing error message for a failed refund Connect response.
+     *
+     * Centralises the mapping so both the pre-flight handler and the post-flight
+     * `refund_transaction()` call surface identical messaging.
+     *
+     * @since 3.6.9
+     *
+     * @param mixed $proxy_response Either a WP_Error or a decoded Connect error response.
+     * @return string
+     */
+    function resolve_refund_error_message($proxy_response): string
+    {
+    }
+    /**
+     * Returns the transient key used to cache a pre-flighted refund Connect response.
+     *
+     * @since 3.6.9
+     *
+     * @param string $transaction_id Capture ID being refunded.
+     * @return string
+     */
+    function preflight_cache_key(string $transaction_id): string
+    {
+    }
     /**
      * Refunds a transaction in PayPal.
      *
@@ -74091,6 +77725,42 @@ namespace {
     function edd_ajax_user_search()
     {
     }
+    /**
+     * Removed the discount query var from the main query to prevent it from
+     * interfering with WP_Query on the static front page.
+     *
+     * No longer necessary. The 'discount' query var is no longer registered
+     * globally — it is only registered for API requests, so it never reaches
+     * WP_Query on non-API requests. Cleanup of the discount query arg during
+     * cart actions is now handled in edd_process_add_to_cart().
+     *
+     * @since 2.4.3
+     * @deprecated 3.6.9
+     *
+     * @param WP_Query $query Main query.
+     * @return void
+     */
+    function edd_unset_discount_query_arg($query)
+    {
+    }
+    /**
+     * Prevented canonical redirects on the static front page when a discount
+     * query var was present in the URL.
+     *
+     * No longer necessary. The 'discount' query var is no longer registered
+     * globally, so WordPress does not treat /?discount=CODE as a recognised
+     * query var and no redirect is triggered.
+     *
+     * @since 2.4.3
+     * @deprecated 3.6.9
+     *
+     * @param string $redirect_url  Redirect URL.
+     * @param string $requested_url Requested URL.
+     * @return string
+     */
+    function edd_prevent_canonical_redirect($redirect_url, $requested_url)
+    {
+    }
     // @codeCoverageIgnore
     /**
      * Add a discount.
@@ -80598,14 +84268,10 @@ namespace {
     {
     }
     /**
-     * Abstraction for WordPress cron checking, to avoid code duplication.
-     *
-     * In future versions of EDD, this function will be changed to only refer to
-     * EDD specific cron related jobs. You probably won't want to use it until then.
+     * Abstraction for cron context checking, covering both WP-Cron and Action Scheduler.
      *
      * @since 2.8.16
-     *
-     * @return boolean
+     * @return bool
      */
     function edd_doing_cron()
     {
@@ -84448,31 +88114,6 @@ namespace {
      * @since 1.2.2
      */
     function edd_block_attachments()
-    {
-    }
-    /**
-     * Removes our tracking query arg so as not to interfere with the WP query.
-     *
-     * @see https://core.trac.wordpress.org/ticket/25143
-     *
-     * @since 2.4.3
-     *
-     * @param WP_Query $query.
-     */
-    function edd_unset_discount_query_arg($query)
-    {
-    }
-    /**
-     * Filters on canonical redirects.
-     *
-     * @since 2.4.3
-     *
-     * @param string $redirect_url  Redirect URL.
-     * @param string $requested_url Requested URL.
-     *
-     * @return string
-     */
-    function edd_prevent_canonical_redirect($redirect_url, $requested_url)
     {
     }
     /**
