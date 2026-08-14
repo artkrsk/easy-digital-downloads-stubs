@@ -2,85 +2,15 @@ name: Check for EDD Updates
 
 on:
   schedule:
-    - cron: '0 0 1,15 * *'  # Runs at midnight UTC on 1st and 15th of each month (biweekly)
-  workflow_dispatch:  # Allow manual triggering for testing
+    - cron: '0 0 1,15 * *' # biweekly
+  workflow_dispatch:
 
 permissions:
-  contents: write  # Needed for checkout with full history
-  actions: write   # Needed to trigger generate.yml workflow
+  contents: write
+  actions: write
 
 jobs:
   check-version:
-    runs-on: self-hosted
-
-    steps:
-      - name: Disable git hooks
-        run: git config --global core.hooksPath /dev/null
-
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0  # Need full history for tags
-
-      - name: Get latest Easy Digital Downloads version from WordPress.org
-        id: edd-core
-        run: |
-          # Query WordPress.org API for latest EDD version
-          LATEST_VERSION=$(curl -s 'https://api.wordpress.org/plugins/info/1.0/easy-digital-downloads.json' | \
-            python3 -c "import sys, json; print(json.load(sys.stdin)['version'])")
-
-          if [ -z "$LATEST_VERSION" ]; then
-            echo "❌ Failed to fetch EDD version from WordPress.org API"
-            exit 1
-          fi
-
-          echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
-          echo "✓ Latest Easy Digital Downloads: $LATEST_VERSION"
-
-      - name: Check if stubs exist for this version
-        id: check
-        run: |
-          EDD_VERSION="${{ steps.edd-core.outputs.version }}"
-
-          # Get all tags matching this EDD version (v3.6.7, v3.6.7.1, etc.)
-          MATCHING_TAGS=$(git tag -l "v${EDD_VERSION}*" | sort -V | tail -1)
-
-          if [ -z "$MATCHING_TAGS" ]; then
-            echo "needs_update=true" >> $GITHUB_OUTPUT
-            echo "✅ No stubs found for EDD $EDD_VERSION - update needed"
-          else
-            echo "needs_update=false" >> $GITHUB_OUTPUT
-            echo "⏭️  Stubs already exist for EDD $EDD_VERSION (tag: $MATCHING_TAGS)"
-          fi
-
-      - name: Trigger stub generation
-        if: steps.check.outputs.needs_update == 'true'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'generate.yml',
-              ref: 'master',
-              inputs: {
-                edd_version: '${{ steps.edd-core.outputs.version }}'
-              }
-            });
-
-            console.log('✅ Triggered stub generation workflow for EDD ${{ steps.edd-core.outputs.version }}');
-
-      - name: Summary
-        run: |
-          echo "## Version Check Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Easy Digital Downloads**: ${{ steps.edd-core.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Update Needed**: ${{ steps.check.outputs.needs_update }}" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ steps.check.outputs.needs_update }}" == "true" ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "🚀 Stub generation workflow has been triggered!" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✓ EDD core stubs are already up-to-date." >> $GITHUB_STEP_SUMMARY
-          fi
+    uses: artkrsk/stub-package-workflows/.github/workflows/stub-check-updates.yml@master
+    with:
+      primary_slug: easy-digital-downloads
