@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- changed: updated stubs for EDD 3.6.9
+
 ## [3.6.7] - 2026-05-16
 
 - Drop residual SL + ConvertKit references from core package docs
