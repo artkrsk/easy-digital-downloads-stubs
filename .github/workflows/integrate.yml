@@ -11,6 +11,6 @@ permissions:
 
 jobs:
   test:
-    uses: artkrsk/stub-package-workflows/.github/workflows/stub-test.yml@master
+    uses: artkrsk/stub-package-workflows/.github/workflows/stub-test.yml@17a54677f1a78e137125ce050ff292a695782d0d # master
     with:
       stub_file: easy-digital-downloads-stubs.php

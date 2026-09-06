@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   generate:
-    uses: artkrsk/stub-package-workflows/.github/workflows/stub-generate.yml@master
+    uses: artkrsk/stub-package-workflows/.github/workflows/stub-generate.yml@17a54677f1a78e137125ce050ff292a695782d0d # master
     with:
       source_version: ${{ inputs.source_version }}
       wp_org_slug: easy-digital-downloads

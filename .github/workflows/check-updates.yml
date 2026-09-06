@@ -11,6 +11,6 @@ permissions:
 
 jobs:
   check-version:
-    uses: artkrsk/stub-package-workflows/.github/workflows/stub-check-updates.yml@master
+    uses: artkrsk/stub-package-workflows/.github/workflows/stub-check-updates.yml@17a54677f1a78e137125ce050ff292a695782d0d # master
     with:
       primary_slug: easy-digital-downloads
