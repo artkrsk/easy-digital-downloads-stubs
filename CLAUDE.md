@@ -72,7 +72,6 @@ Set it via `.env` file (copy from `.env.example`) or export directly.
 - `check-updates.yml` — Biweekly check for new EDD releases on WordPress.org (auto-triggers `generate.yml`)
 - `integrate.yml` — CI tests on push/PR (PHPUnit + PHPStan + PHPCS)
 - `release.yml` — Creates a GitHub Release with auto-generated notes when a `v*` tag is pushed
-- `claude.yml` / `claude-code-review.yml` — Claude Code integration for issues / PRs
 
 The `master` ruleset requires the check **`test / test`** (the reusable workflow's name) and
 allows no bypass. `generate.yml` reports that context itself, since a PR opened with the
