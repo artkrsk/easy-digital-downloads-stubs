@@ -4,7 +4,7 @@
 namespace {
 	// Easy Digital Downloads constants
 	if (!defined('EDD_VERSION')) {
-		define('EDD_VERSION', '3.7.0');
+		define('EDD_VERSION', '3.7.2');
 	}
 	if (!defined('EDD_PLUGIN_FILE')) {
 		define('EDD_PLUGIN_FILE', __FILE__);
@@ -3662,12 +3662,44 @@ namespace {
          * Process Get Products API Request
          *
          * @since  1.5
+         * @since  3.7.1 The single-product branch now refuses a post whose status the
+         *                         caller cannot read, and the collection branch pins `post_status`
+         *                         to `publish` explicitly.
          *
          * @param array $args Arguments provided by API Request.
          *
          * @return array $customers Multidimensional array of the products
          */
         public function get_products($args = array())
+        {
+        }
+        /**
+         * Whether the caller is allowed to read a product with a non-public status.
+         *
+         * Mirrors the authorization pattern used elsewhere in this class: the user who owns the
+         * API key, the logged in user, or an internal caller that never validated a request.
+         *
+         * @since 3.7.1
+         *
+         * @param int $product_id The download ID being requested.
+         * @return bool True if the caller may read the product.
+         */
+        protected function can_read_product($product_id)
+        {
+        }
+        /**
+         * The error returned when a product is not the caller's to read.
+         *
+         * A product which exists but is not available to this caller answers the same way as one
+         * which does not exist, so the message lives here rather than being written out at each
+         * of the places that returns it.
+         *
+         * @since 3.7.1
+         *
+         * @param int|string $product The product identifier from the request.
+         * @return string
+         */
+        protected function product_not_found($product)
         {
         }
         /**
@@ -3976,6 +4008,9 @@ namespace {
          * Process Get Products API Request
          *
          * @since 2.6
+         * @since 3.7.1 The single-product branch now refuses a post whose status the
+         *                        caller cannot read, and the collection branch pins `post_status`
+         *                        to `publish` explicitly.
          * @param array $args Query arguments
          * @return array $customers Multidimensional array of the products
          */
@@ -4489,6 +4524,10 @@ namespace {
          * Use edd_get_cart_item_final_price()
          *
          * @since 2.7
+         * @since 3.7.1 A cart item whose price option does not resolve — reachable only for
+         *                       an item that did not go through `add()`'s own price ID sanitizing —
+         *                       returns false instead of falling back to the product's `edd_price`
+         *                       meta.
          *
          * @param  int   $download_id               Download ID for the cart item
          * @param  array $options                   Optional parameters, used for defining variable prices
@@ -4708,6 +4747,10 @@ namespace {
          * Save Cart
          *
          * @since 2.7
+         * @since 3.7.1 A guest's cart token is signed with the store's own key. The work of
+         *                       saving and restoring a cart now lives in `EDD\Cart\SavedCart`; this
+         *                       stays the public entry point.
+         *
          * @return bool
          */
         public function save()
@@ -4717,7 +4760,13 @@ namespace {
          * Restore Cart
          *
          * @since 2.7
-         * @return bool
+         * @since 3.7.1 A guest's cart restores through a store-signed token, rebuilt via
+         *                       `EDD_Cart::add()`. A request with nothing saved for it is refused,
+         *                       and `edd_get_cart_token` does not apply on the guest path — a
+         *                       guest's token is checked against the store's signature, a logged in
+         *                       customer's against their own user meta.
+         *
+         * @return bool|WP_Error
          */
         public function restore()
         {
@@ -6289,6 +6338,20 @@ namespace EDD\Database {
         {
         }
         /**
+         * Reprime an item's caches from the database.
+         *
+         * Custom for EDD. For callers which change a row with their own statement rather than
+         * through update_item(), which is what normally reprimes these caches.
+         *
+         * @since 3.7.1
+         *
+         * @param int $item_id The item ID.
+         * @return void
+         */
+        public function refresh_item_cache($item_id = 0)
+        {
+        }
+        /**
          * Fetch raw results directly from the database.
          *
          * @since 1.0.0
@@ -6909,6 +6972,7 @@ namespace {
          *
          * @since 2.3
          * @since 3.0 Use the new Notes component & API
+         * @since 3.7.1 Note content is sanitized by edd_sanitize_note_content().
          *
          * @param string $note The note to add
          * @return string|boolean The new note if added successfully, false otherwise
@@ -7857,13 +7921,15 @@ namespace {
          * @since 2.7
          * @since 3.0 Refactored to use new query methods.
          * @since 3.2 Refactored to use the order adjustments table, and always run the filter.
+         * @since 3.7.2 Also counts the customer's other orders that hold a use of the discount.
          *
          * @param string $user      User info.
          * @param bool   $set_error Whether an error message be set in session.
+         * @param int    $order_id  The order being checked, which does not count against itself.
          *
          * @return bool Whether the discount has been used or not.
          */
-        public function is_used($user = '', $set_error = \true)
+        public function is_used($user = '', $set_error = \true, $order_id = 0)
         {
         }
         /**
@@ -7887,6 +7953,18 @@ namespace {
          * @return bool If the discount is archived or not.
          */
         public function is_archived($set_error = \true)
+        {
+        }
+        /**
+         * Whether the discount can be applied to an order, counting the use that order already holds.
+         *
+         * @since 3.7.2
+         *
+         * @param int  $order_id  The order ID, or 0 for a new order.
+         * @param bool $set_error Whether an error message be set in session.
+         * @return bool
+         */
+        public function is_available_to_order($order_id, $set_error = \true)
         {
         }
         /**
@@ -7930,16 +8008,31 @@ namespace {
          * Increment the usage of the discount.
          *
          * @since 2.7
+         * @since 3.7.1 Returns false when the discount had no use left to claim.
+         * @since 3.7.2 Deactivates the code at its cap without rewriting the rest of the row.
          *
-         * @return int New discount usage.
+         * @return int|false New usage, or false if the code is used up.
          */
         public function increase_usage()
+        {
+        }
+        /**
+         * Increments the usage of the discount even when it has no use left.
+         *
+         * Only for a use the buyer has already paid for, which can't be refused.
+         *
+         * @since 3.7.2
+         *
+         * @return int|false New usage, or false if the count could not be updated.
+         */
+        public function increase_usage_past_limit()
         {
         }
         /**
          * Decrement the usage of the discount.
          *
          * @since 2.7
+         * @since 3.7.2 Reactivates only a code that was deactivated by reaching its cap.
          *
          * @return int New discount usage.
          */
@@ -7969,6 +8062,122 @@ namespace {
         {
         }
     }
+}
+namespace EDD\Downloads\Traits {
+    // @codeCoverageIgnore
+    trait Files
+    {
+        /**
+         * The download files
+         *
+         * @since 2.2
+         * @var array
+         */
+        private $files;
+        /**
+         * Retrieve the file downloads.
+         *
+         * @since 2.2
+         * @since 3.7.1 The product's whole file list is what is memoized, so a named price
+         *                       option is applied on every call rather than only on the first one.
+         *
+         * @param int|null $variable_price_id The requested price ID, if any.
+         * @return array List of download files
+         */
+        public function get_files($variable_price_id = null)
+        {
+        }
+        /**
+         * Retrieves the files one price option is entitled to download.
+         *
+         * A null price option here means the purchase records none, so a variable-priced product is
+         * entitled only to the files carrying no price option restriction. That is the difference
+         * from get_files(), which returns the whole list when no option is named, and which is what
+         * the download editor, the exporters and the APIs want.
+         *
+         * @since 3.7.1
+         *
+         * @param int|null $price_id The price option, or null when the purchase records none.
+         * @return array List of download files.
+         */
+        public function get_files_for_price_id($price_id)
+        {
+        }
+        /**
+         * Retrieve the price option that has access to the specified file.
+         *
+         * @since 2.2
+         * @return int|string
+         */
+        public function get_file_price_condition($file_key = 0)
+        {
+        }
+        /**
+         * Retrieves the product's whole file list.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        private function get_all_files()
+        {
+        }
+        /**
+         * Restricts a file list to the files whose condition names a price option.
+         *
+         * A file carrying no condition at all names no price option, so it is not returned here.
+         * get_files() has read it that way since 2.2.
+         *
+         * @since 3.7.1
+         *
+         * @param array $files    The product's whole file list.
+         * @param int   $price_id The price option named by the caller.
+         * @return array
+         */
+        private function filter_files_by_condition($files, $price_id)
+        {
+        }
+        /**
+         * Restricts a file list to what one price option is entitled to.
+         *
+         * @since 3.7.1
+         *
+         * @param array    $files    The product's whole file list.
+         * @param int|null $price_id The price option, or null when the purchase records none.
+         * @return array
+         */
+        private function filter_files_for_entitlement($files, $price_id)
+        {
+        }
+        /**
+         * Whether a file's condition names a given price option.
+         *
+         * @since 3.7.1
+         *
+         * @param array    $file_info A single entry from the product's file list.
+         * @param int|null $price_id  The price option to match against.
+         * @return bool
+         */
+        private function file_names_price_option($file_info, $price_id)
+        {
+        }
+        /**
+         * Whether a file carries no price option restriction at all.
+         *
+         * `all` is the stored value for a file every option may download, and an absent or empty
+         * condition is what get_file_price_condition() already reads as `all`. Price option `0` is a
+         * real restriction, so it is deliberately not caught here.
+         *
+         * @since 3.7.1
+         *
+         * @param array $file_info A single entry from the product's file list.
+         * @return bool
+         */
+        private function file_is_unrestricted($file_info)
+        {
+        }
+    }
+}
+namespace {
     /**
      * EDD_Download Class
      *
@@ -7976,6 +8185,7 @@ namespace {
      */
     class EDD_Download
     {
+        use \EDD\Downloads\Traits\Files;
         /**
          * The download ID
          *
@@ -8257,16 +8467,6 @@ namespace {
         {
         }
         /**
-         * Retrieve the file downloads
-         *
-         * @since 2.2
-         * @param integer $variable_price_id
-         * @return array List of download files
-         */
-        public function get_files($variable_price_id = \null)
-        {
-        }
-        /**
          * Retrieve the file download limit
          *
          * @since 2.2
@@ -8292,15 +8492,6 @@ namespace {
          * @return string `refundable` or `nonrefundable`
          */
         public function get_refundability()
-        {
-        }
-        /**
-         * Retrieve the price option that has access to the specified file
-         *
-         * @since 2.2
-         * @return int|string
-         */
-        public function get_file_price_condition($file_key = 0)
         {
         }
         /**
@@ -8669,11 +8860,26 @@ namespace {
         {
         }
         /**
+         * Sanitize the product notes shown to the customer with their purchase.
+         *
+         * Held to the same tags the receipt renders, so what a store saves is what its customer
+         * is shown. This is how customer and order notes are already stored.
+         *
+         * @since 3.7.1
+         *
+         * @param string $notes The notes passed into the meta.
+         * @return string The sanitized notes.
+         */
+        public function sanitize_product_notes($notes)
+        {
+        }
+        /**
          * Sanitize values that come in as arrays
          *
          * @since  2.5
+         * @since  3.7.1 A serialized value is deserialized with classes disallowed, and refused when it names one.
          * @param  array|string $value The value passed into the meta.
-         * @return array         The sanitized value.
+         * @return array|false   The sanitized value, or false when a serialized value is refused.
          */
         public function sanitize_array($value = array())
         {
@@ -8710,6 +8916,25 @@ namespace {
          * @return array $files Array of the remapped file downloads
          */
         public function sanitize_files($files = array())
+        {
+        }
+        /**
+         * Whether a user may write a download's file list through a capability-checked channel.
+         *
+         * Consulted for the edit_post_meta, add_post_meta and delete_post_meta capabilities, so every
+         * channel that checks them (XML-RPC custom fields, the custom-fields AJAX handlers) requires the
+         * capability. The metabox save writes through update_post_meta(), which does not consult this
+         * callback, and keeps its own per-row ownership rule.
+         *
+         * @since 3.7.1
+         *
+         * @param bool   $allowed   Whether the user may write the meta.
+         * @param string $meta_key  The meta key being written.
+         * @param int    $object_id The download.
+         * @param int    $user_id   The user the capability is being checked for.
+         * @return bool
+         */
+        public function can_write_download_files_meta($allowed, $meta_key, $object_id, $user_id)
         {
         }
     }
@@ -9642,6 +9867,7 @@ namespace PayWithAmazon {
          * Process the purchase and create the charge in Amazon
          *
          * @since  2.4
+         * @since  3.7.2 Builds the order before the charge, so an order whose discount can't be claimed is refused unpaid.
          * @param  $purchase_data array Cart details
          * @return void
          */
@@ -12542,6 +12768,3036 @@ namespace EDD\API\WP {
         }
     }
 }
+namespace EDD\Abilities {
+    // @codeCoverageIgnore
+    /**
+     * Base class for EDD abilities.
+     *
+     * Each ability describes one EDD operation: its name, input/output JSON
+     * Schema, behavior annotations, and the capability that gates it. Subclasses
+     * implement the metadata getters and extend ReadAbility or WriteAbility, which
+     * own execute(); registration with WordPress is handled here.
+     *
+     * @since 3.7.1
+     */
+    abstract class Ability
+    {
+        /**
+         * The namespace prefix for all EDD abilities.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const ABILITY_NAMESPACE = 'edd';
+        /**
+         * Executes the ability.
+         *
+         * The Abilities API validates input against the input schema before calling
+         * this, but the method is public and reachable without it, so ReadAbility and
+         * WriteAbility run require_input() before handing anything to a subclass
+         * rather than trusting the argument.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed $input The input, or null when the ability accepts no input.
+         * @return array|\WP_Error
+         */
+        public function execute($input = null) {}
+        /**
+         * Gets the fully qualified ability name.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        public function get_name(): string
+        {
+        }
+        /**
+         * Whether the ability should be registered on this site.
+         *
+         * Feature-gated abilities override this so a site only exposes the
+         * features it actually has active.
+         *
+         * @since 3.7.1
+         *
+         * @return bool
+         */
+        public function is_available(): bool
+        {
+        }
+        /**
+         * Checks whether the current user may run this ability.
+         *
+         * The Abilities API passes the validated input when an input schema is
+         * registered, so subclasses may override this for input-aware checks.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed $input The validated input, or null when the ability accepts no input.
+         * @return bool
+         */
+        public function check_permissions($input = null): bool
+        {
+        }
+        /**
+         * Registers the ability with the WordPress Abilities API.
+         *
+         * Must be called during the `wp_abilities_api_init` action.
+         *
+         * @since 3.7.1
+         *
+         * @return void
+         */
+        public function register(): void
+        {
+        }
+        /**
+         * Normalizes the input, then checks it against the ability's own input schema.
+         *
+         * The required keys come from the schema's own `required` list, so an ability
+         * names them in one place. A missing one returns `edd_ability_missing_input`,
+         * whose message names the field; a value the schema refuses returns
+         * `edd_ability_invalid_input`, carrying the validator's own message.
+         *
+         * The schema check runs because execute() is public and reachable without the
+         * Abilities API, which is the only other thing that validates the input.
+         *
+         * Input which passes is returned sanitized, so a declared type arrives as that
+         * type. The Abilities API validates without sanitizing, and the validator
+         * accepts the string `'false'` for a boolean and `"12"` for an integer, which
+         * every truthiness and identity check downstream would read the wrong way.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed $input The input passed to execute().
+         * @return array|\WP_Error The input as an array, or the error to hand back.
+         */
+        protected function require_input($input)
+        {
+        }
+        /**
+         * Gets the ability slug (the part after the `edd/` namespace).
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string {}
+        /**
+         * Gets the human-readable label for the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string {}
+        /**
+         * Gets the description of the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string {}
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * Name the capability which gates the equivalent admin screen. The base class
+         * checks only this, so a capability an unprivileged role holds opens the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string {}
+        /**
+         * Gets the output JSON Schema for the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array {}
+        /**
+         * Gets the behavior annotations for the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_annotations(): array {}
+        /**
+         * Gets the input JSON Schema for the ability.
+         *
+         * The default describes an ability which accepts no input. It is an empty
+         * object rather than nothing at all because many MCP clients send `{}`
+         * instead of omitting input, and those calls have to stay valid. Return an
+         * empty array to register no input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Base class for write abilities.
+     *
+     * Write abilities default to additive (not destructive) and not idempotent,
+     * which maps to POST over REST. Destructive operations, such as deleting a
+     * discount, override get_annotations() to declare themselves.
+     *
+     * @since 3.7.1
+     */
+    abstract class WriteAbility extends \EDD\Abilities\Ability
+    {
+        /**
+         * Executes the ability.
+         *
+         * Checking the input is the same for every write, so a subclass implements
+         * write_data() and this stays the single entry point. Unlike a read, the
+         * result is not filtered: it reports what was saved, so a callback which
+         * reshaped it would describe a write which did not happen.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed $input The input, or null when the ability accepts no input.
+         * @return array|\WP_Error
+         */
+        final public function execute($input = null)
+        {
+        }
+        /**
+         * Checks whether the current user may run this write ability.
+         *
+         * Write abilities carry a second gate on top of the capability check: the
+         * store must have opted in to letting abilities change its data. A store
+         * can therefore expose its whole read surface without allowing edits.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed $input The validated input, or null when the ability accepts no input.
+         * @return bool
+         */
+        public function check_permissions($input = null): bool
+        {
+        }
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input) {}
+        /**
+         * Gets the behavior annotations for a write ability.
+         *
+         * Destructive is false and idempotent is false by default, which routes a
+         * write over POST. A destructive and idempotent ability is routed over
+         * DELETE instead, and the REST controller reads DELETE input from the
+         * `input` query string rather than a body, which some MCP clients cannot
+         * send and which writes record IDs into server access logs. An ability which
+         * is idempotent in the plain sense, such as deleting a record which is
+         * already gone, therefore still declares itself not idempotent.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_annotations(): array
+        {
+        }
+        /**
+         * Records who made a change, on the record that changed.
+         *
+         * Only orders and customers get one: they are the two objects whose notes a
+         * store owner can read back. The note-add abilities are left alone, since the
+         * note they write is already the record of the change.
+         *
+         * @since 3.7.1
+         *
+         * @param int    $object_id   The order or customer ID.
+         * @param string $object_type Either `order` or `customer`.
+         * @return void
+         */
+        protected function log_note(int $object_id, string $object_type): void
+        {
+        }
+        /**
+         * The error for a record which saved but could not be read back.
+         *
+         * The write landed, so the message has to say so: a client told only that the
+         * request failed will try again, and a second attempt would save it twice.
+         *
+         * @since 3.7.1
+         *
+         * @param int $object_id The ID the write returned.
+         * @return \WP_Error
+         */
+        protected function saved_but_unreadable(int $object_id): \WP_Error
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Traits {
+    // @codeCoverageIgnore
+    /**
+     * Formats EDD customers for ability output.
+     *
+     * @since 3.7.1
+     */
+    trait FormatsCustomers
+    {
+        /**
+         * Gets the JSON Schema describing one customer.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected static function get_customer_schema(): array
+        {
+        }
+        /**
+         * Formats a customer for ability output.
+         *
+         * Email addresses and the customer address are included only when the
+         * current user can view sensitive shop data.
+         *
+         * @since 3.7.1
+         *
+         * @param \EDD_Customer $customer        The customer object.
+         * @param bool          $include_address Whether to include the primary address.
+         * @return array
+         */
+        protected static function format_customer($customer, bool $include_address = false): array
+        {
+        }
+        /**
+         * Gets the primary address for a customer, formatted for ability output.
+         *
+         * Prefers the address flagged as primary, falling back to any other
+         * address on file.
+         *
+         * @since 3.7.1
+         *
+         * @param \EDD_Customer $customer The customer object.
+         * @return array|null The formatted address, or null when none exists.
+         */
+        private static function get_primary_address($customer): ?array
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Customers {
+    /**
+     * Creates a customer record.
+     *
+     * @since 3.7.1
+     */
+    class Create extends \EDD\Abilities\WriteAbility
+    {
+        use \EDD\Abilities\Traits\FormatsCustomers;
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Traits {
+    // @codeCoverageIgnore
+    /**
+     * Formats EDD notes for ability output.
+     *
+     * @since 3.7.1
+     */
+    trait FormatsNotes
+    {
+        /**
+         * Gets the JSON Schema describing one note.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected static function get_note_schema(): array
+        {
+        }
+        /**
+         * Formats a note for ability output.
+         *
+         * @since 3.7.1
+         *
+         * @param \EDD\Notes\Note $note The note object.
+         * @return array
+         */
+        protected static function format_note($note): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities {
+    /**
+     * Base class for note-add abilities.
+     *
+     * Adding a note is the same operation whichever record it hangs off, so beyond
+     * the naming methods every ability implements, a subclass supplies only the
+     * note's object type, the input key naming the record and its description, how
+     * to look that record up, and the capability which gates it.
+     *
+     * @since 3.7.1
+     */
+    abstract class NoteAddAbility extends \EDD\Abilities\WriteAbility
+    {
+        use \EDD\Abilities\Traits\FormatsNotes;
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the note object type this ability writes.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_object_type(): string {}
+        /**
+         * Gets the input key naming the record the note belongs to.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_key(): string {}
+        /**
+         * Finds the record the note belongs to.
+         *
+         * @since 3.7.1
+         *
+         * @param int $object_id The record ID.
+         * @return object|\WP_Error The record, or the ability's not-found error.
+         */
+        protected function find_object(int $object_id) {}
+        /**
+         * Gets the description of the input key naming the record.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_description(): string {}
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Customers {
+    /**
+     * Adds a note to a customer.
+     *
+     * @since 3.7.1
+     */
+    class NoteAdd extends \EDD\Abilities\NoteAddAbility
+    {
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the note object type this ability writes.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_object_type(): string
+        {
+        }
+        /**
+         * Gets the input key naming the record the note belongs to.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_key(): string
+        {
+        }
+        /**
+         * Finds the customer the note belongs to.
+         *
+         * @since 3.7.1
+         *
+         * @param int $object_id The customer ID.
+         * @return \EDD_Customer|\WP_Error
+         */
+        protected function find_object(int $object_id)
+        {
+        }
+        /**
+         * Gets the description of the input key naming the record.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_description(): string
+        {
+        }
+    }
+}
+namespace EDD\Abilities {
+    // @codeCoverageIgnore
+    /**
+     * Base class for read-only abilities.
+     *
+     * Read abilities never modify state, so they are annotated readonly and
+     * idempotent, and are exposed over REST as GET requests.
+     *
+     * @since 3.7.1
+     */
+    abstract class ReadAbility extends \EDD\Abilities\Ability
+    {
+        /**
+         * Executes the ability.
+         *
+         * Checking the input and filtering the result are the same for every read, so
+         * a subclass implements read_data() and this stays the single entry point.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed $input The input, or null when the ability accepts no input.
+         * @return array|\WP_Error
+         */
+        final public function execute($input = null)
+        {
+        }
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input) {}
+        /**
+         * Gets the behavior annotations for a read-only ability.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_annotations(): array
+        {
+        }
+    }
+    /**
+     * Base class for note-read abilities.
+     *
+     * Listing notes is the same operation whichever record they hang off, so beyond
+     * the naming methods every ability implements, a subclass supplies only the
+     * note's object type, the input key naming the record and its description, how
+     * to look that record up, and the capability which gates it.
+     *
+     * @since 3.7.1
+     */
+    abstract class NoteReadAbility extends \EDD\Abilities\ReadAbility
+    {
+        use \EDD\Abilities\Traits\FormatsNotes;
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the note object type this ability reads.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_object_type(): string {}
+        /**
+         * Gets the input key naming the record the notes belong to.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_key(): string {}
+        /**
+         * Finds the record the notes belong to.
+         *
+         * @since 3.7.1
+         *
+         * @param int $object_id The record ID.
+         * @return object|\WP_Error The record, or the ability's not-found error.
+         */
+        protected function find_object(int $object_id) {}
+        /**
+         * Gets the description of the input key naming the record.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_description(): string {}
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Customers {
+    /**
+     * Reads the notes attached to a customer.
+     *
+     * @since 3.7.1
+     */
+    class NoteRead extends \EDD\Abilities\NoteReadAbility
+    {
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the note object type this ability reads.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_object_type(): string
+        {
+        }
+        /**
+         * Gets the input key naming the record the notes belong to.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_key(): string
+        {
+        }
+        /**
+         * Finds the customer the notes belong to.
+         *
+         * @since 3.7.1
+         *
+         * @param int $object_id The customer ID.
+         * @return \EDD_Customer|\WP_Error
+         */
+        protected function find_object(int $object_id)
+        {
+        }
+        /**
+         * Gets the description of the input key naming the record.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_description(): string
+        {
+        }
+    }
+    /**
+     * Reads a single customer or a filtered list of customers.
+     *
+     * Email addresses and address data are personally identifiable information,
+     * so they are included only when the current user can view sensitive shop data.
+     *
+     * @since 3.7.1
+     */
+    class Read extends \EDD\Abilities\ReadAbility
+    {
+        use \EDD\Abilities\Traits\FormatsCustomers;
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Updates the name, primary email address, or status of a customer.
+     *
+     * @since 3.7.1
+     */
+    class Update extends \EDD\Abilities\WriteAbility
+    {
+        use \EDD\Abilities\Traits\FormatsCustomers;
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Traits {
+    // @codeCoverageIgnore
+    /**
+     * Validates and converts ability input dates, and builds date range queries from them.
+     *
+     * @since 3.7.1
+     */
+    trait FormatsDates
+    {
+        /**
+         * Validates an input date, returning it or the error to hand back.
+         *
+         * A JSON Schema `pattern` matches the shape but not the calendar, so
+         * `2026-02-31` reaches here. EDD's date helpers substitute the current date
+         * for anything they cannot parse and MySQL rejects it in a query, either of
+         * which reports success while doing something else.
+         *
+         * @since 3.7.1
+         *
+         * @param string $field The input field name, for the error message.
+         * @param mixed  $date  The input date value.
+         * @return string|\WP_Error The date as YYYY-MM-DD, or the error.
+         */
+        private function validate_date_input(string $field, $date)
+        {
+        }
+        /**
+         * Validates an input date and converts it to a UTC date string for storage.
+         *
+         * Mirrors the admin discount editor: the date is combined with a time in
+         * the store's timezone, then converted to UTC. End dates run to the end of
+         * the day.
+         *
+         * @since 3.7.1
+         *
+         * @param string $field      The input field name, for the error message.
+         * @param mixed  $date       The input date value.
+         * @param bool   $end_of_day Whether to use the end-of-day time (23:59:59).
+         * @return string|\WP_Error The UTC date string, or the error.
+         */
+        private function format_date_input(string $field, $date, bool $end_of_day = false)
+        {
+        }
+        /**
+         * Builds a created-date range query from the ability input.
+         *
+         * The dates are read as whole days in the store's timezone and converted to
+         * UTC, because Berlin stamps `date_created` in UTC.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error The date query, empty when neither date was given, or the error.
+         */
+        private function build_date_query(array $input)
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Formats EDD discounts for ability output.
+     *
+     * @since 3.7.1
+     */
+    trait FormatsDiscounts
+    {
+        /**
+         * Gets the JSON Schema describing one discount.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected static function get_discount_schema(): array
+        {
+        }
+        /**
+         * Formats a discount for ability output.
+         *
+         * @since 3.7.1
+         *
+         * @param \EDD_Discount $discount The discount object.
+         * @return array
+         */
+        protected static function format_discount($discount): array
+        {
+        }
+        /**
+         * Gets the two values a discount scope may take.
+         *
+         * @since 3.7.1
+         *
+         * @return string[]
+         */
+        protected static function get_scope_values(): array
+        {
+        }
+        /**
+         * Formats a stored discount scope as one of the two values the schema declares.
+         *
+         * The column defaults to an empty string, so a discount saved without the
+         * scope radio carries neither value. `edd_is_discount_not_global()` reads
+         * anything but `not_global` as applying to the whole order.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed $scope The stored scope.
+         * @return string Either `global` or `not_global`.
+         */
+        private static function format_scope($scope): string
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Discounts {
+    /**
+     * Creates a discount code, mirroring the admin "Add Discount" flow.
+     *
+     * @since 3.7.1
+     */
+    class Create extends \EDD\Abilities\WriteAbility
+    {
+        use \EDD\Abilities\Traits\FormatsDates;
+        use \EDD\Abilities\Traits\FormatsDiscounts;
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Deletes an unused discount.
+     *
+     * Discounts that have been used on orders cannot be deleted; they should be
+     * archived instead so order history stays intact.
+     *
+     * @since 3.7.1
+     */
+    class Delete extends \EDD\Abilities\WriteAbility
+    {
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the behavior annotations.
+         *
+         * Declared destructive: the discount record is removed rather than changed.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_annotations(): array
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Reads a single discount or a filtered list of discounts.
+     *
+     * @since 3.7.1
+     */
+    class Read extends \EDD\Abilities\ReadAbility
+    {
+        use \EDD\Abilities\Traits\FormatsDiscounts;
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Updates an existing discount.
+     *
+     * Only the fields provided in the input are changed; omitted fields are left
+     * as they are.
+     *
+     * @since 3.7.1
+     */
+    class Update extends \EDD\Abilities\WriteAbility
+    {
+        use \EDD\Abilities\Traits\FormatsDates;
+        use \EDD\Abilities\Traits\FormatsDiscounts;
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities {
+    /**
+     * Abilities Loader.
+     *
+     * Registers the EDD ability category and all core abilities. The entire
+     * surface is gated on the WordPress Abilities API (WordPress 6.9+); on older
+     * versions nothing subscribes and nothing registers.
+     *
+     * @since 3.7.1
+     */
+    class Loader implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * The ability category slug for all EDD abilities.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const CATEGORY = 'edd';
+        /**
+         * The option key which gates every ability that modifies store data.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const WRITE_SETTING = 'abilities_write_enabled';
+        /**
+         * Gets the events that this class is subscribed to.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * Whether abilities are allowed to modify store data.
+         *
+         * Store owners opt in from Downloads > Tools > AI. Read abilities are
+         * unaffected, and an enabled setting never replaces the capability check
+         * each ability performs on the acting user.
+         *
+         * @since 3.7.1
+         *
+         * @return bool
+         */
+        public static function writes_enabled(): bool
+        {
+        }
+        /**
+         * Registers the EDD ability category.
+         *
+         * @since 3.7.1
+         *
+         * @return void
+         */
+        public function register_category()
+        {
+        }
+        /**
+         * Registers all EDD abilities.
+         *
+         * Nothing stops `wp_abilities_api_init` firing more than once in a request,
+         * and the WordPress registry treats a repeat name as a developer error, so
+         * an ability already registered is skipped rather than re-registered.
+         *
+         * @since 3.7.1
+         *
+         * @return void
+         */
+        public function register_abilities()
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Logs {
+    /**
+     * Reads a filtered list of email logs.
+     *
+     * @since 3.7.1
+     */
+    class Emails extends \EDD\Abilities\ReadAbility
+    {
+        use \EDD\Abilities\Traits\FormatsDates;
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Reads a filtered list of file download logs.
+     *
+     * @since 3.7.1
+     */
+    class FileDownloads extends \EDD\Abilities\ReadAbility
+    {
+        use \EDD\Abilities\Traits\FormatsDates;
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Orders {
+    /**
+     * Creates a manual order, mirroring the admin "Add Order" flow.
+     *
+     * Prices are read from the products themselves; the ability computes
+     * subtotals, applies an optional discount code, inserts the order as pending,
+     * then transitions it to the requested status so completion hooks fire.
+     *
+     * @since 3.7.1
+     */
+    class Create extends \EDD\Abilities\WriteAbility
+    {
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the behavior annotations.
+         *
+         * Declared destructive so clients confirm first: an order adds to store
+         * earnings and to the customer's lifetime value, and emails them by default.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_annotations(): array
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Adds a note to an order.
+     *
+     * @since 3.7.1
+     */
+    class NoteAdd extends \EDD\Abilities\NoteAddAbility
+    {
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the note object type this ability writes.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_object_type(): string
+        {
+        }
+        /**
+         * Gets the input key naming the record the note belongs to.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_key(): string
+        {
+        }
+        /**
+         * Finds the order the note belongs to.
+         *
+         * @since 3.7.1
+         *
+         * @param int $object_id The order ID.
+         * @return \EDD\Orders\Order|\WP_Error
+         */
+        protected function find_object(int $object_id)
+        {
+        }
+        /**
+         * Gets the description of the input key naming the record.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_description(): string
+        {
+        }
+    }
+    /**
+     * Reads the notes attached to an order.
+     *
+     * @since 3.7.1
+     */
+    class NoteRead extends \EDD\Abilities\NoteReadAbility
+    {
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the note object type this ability reads.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_object_type(): string
+        {
+        }
+        /**
+         * Gets the input key naming the record the notes belong to.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_key(): string
+        {
+        }
+        /**
+         * Finds the order the notes belong to.
+         *
+         * @since 3.7.1
+         *
+         * @param int $object_id The order ID.
+         * @return \EDD\Orders\Order|\WP_Error
+         */
+        protected function find_object(int $object_id)
+        {
+        }
+        /**
+         * Gets the description of the input key naming the record.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_id_description(): string
+        {
+        }
+    }
+    /**
+     * Reads a single order or a filtered list of orders.
+     *
+     * @since 3.7.1
+     */
+    class Read extends \EDD\Abilities\ReadAbility
+    {
+        use \EDD\Abilities\Traits\FormatsDates;
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Resends the purchase receipt email for an order.
+     *
+     * @since 3.7.1
+     */
+    class ResendReceipt extends \EDD\Abilities\WriteAbility
+    {
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Updates the status of an order.
+     *
+     * @since 3.7.1
+     */
+    class UpdateStatus extends \EDD\Abilities\WriteAbility
+    {
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the behavior annotations.
+         *
+         * Declared destructive: moving a completed order back to pending or processing
+         * subtracts it from store earnings and from the customer's lifetime value.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_annotations(): array
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities {
+    // @codeCoverageIgnore
+    /**
+     * Pagination helpers shared by list abilities.
+     *
+     * @since 3.7.1
+     */
+    final class Pagination
+    {
+        /**
+         * The default number of items returned by list abilities.
+         *
+         * @since 3.7.1
+         * @var int
+         */
+        const DEFAULT_LIMIT = 20;
+        /**
+         * The maximum number of items returned by list abilities.
+         *
+         * @since 3.7.1
+         * @var int
+         */
+        const MAX_LIMIT = 100;
+        /**
+         * Gets the input schema properties for paginated list abilities.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        public static function input_properties(): array
+        {
+        }
+        /**
+         * Parses the limit and offset from an ability input array.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated ability input.
+         * @return array Array with `limit` and `offset` keys.
+         */
+        public static function parse(array $input): array
+        {
+        }
+        /**
+         * Gets the output schema for a paginated list of items.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key         The property name holding the list of items.
+         * @param array  $item_schema The JSON Schema describing one item.
+         * @return array
+         */
+        public static function output_schema(string $key, array $item_schema): array
+        {
+        }
+        /**
+         * Builds a paginated response envelope.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key    The property name holding the list of items.
+         * @param array  $items  The items for the current page.
+         * @param int    $total  Total number of matching records.
+         * @param int    $limit  The limit used for the query.
+         * @param int    $offset The offset used for the query.
+         * @return array
+         */
+        public static function envelope(string $key, array $items, int $total, int $limit, int $offset): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Products {
+    /**
+     * Creates a new product (download).
+     *
+     * @since 3.7.1
+     */
+    class Create extends \EDD\Abilities\WriteAbility
+    {
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Reads a single product or a filtered list of products.
+     *
+     * EDD products are the `download` custom post type.
+     *
+     * @since 3.7.1
+     */
+    class Read extends \EDD\Abilities\ReadAbility
+    {
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Updates an existing product (download).
+     *
+     * Only the provided fields are changed; everything else is left as-is.
+     *
+     * @since 3.7.1
+     */
+    class Update extends \EDD\Abilities\WriteAbility
+    {
+        /**
+         * Checks whether the current user may run this ability.
+         *
+         * Editing a product owned by another user additionally requires the
+         * `edit_others_products` capability.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed $input The validated input, or null when unavailable.
+         * @return bool
+         */
+        public function check_permissions($input = null): bool
+        {
+        }
+        /**
+         * Writes the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function write_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities {
+    // @codeCoverageIgnore
+    /**
+     * Registry class.
+     *
+     * @since 3.7.1
+     */
+    class Registry
+    {
+        /**
+         * Gets the abilities which should be registered on this site.
+         *
+         * Skips anything which is not an EDD ability, and anything whose feature is
+         * not active, so a store only describes what it can actually do.
+         *
+         * @since 3.7.1
+         *
+         * @return Ability[] Available ability instances, keyed by slug.
+         */
+        public static function get(): array
+        {
+        }
+        /**
+         * Whether a slug is registered.
+         *
+         * @since 3.7.1
+         *
+         * @param string $slug The ability slug.
+         * @return bool
+         */
+        public static function is_registered(string $slug): bool
+        {
+        }
+        /**
+         * Gets a single ability instance.
+         *
+         * @since 3.7.1
+         *
+         * @param string $slug The ability slug.
+         * @return Ability|false The ability, or false if it is not registered or not an EDD ability.
+         */
+        public static function get_ability(string $slug)
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Reports {
+    /**
+     * Gets sales and earnings statistics for a period or date range.
+     *
+     * @since 3.7.1
+     */
+    class Sales extends \EDD\Abilities\ReadAbility
+    {
+        use \EDD\Abilities\Traits\FormatsDates;
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Gets net earnings and sales counts for this month, last month, today, and all time.
+     *
+     * @since 3.7.1
+     */
+    class SalesSummary extends \EDD\Abilities\ReadAbility
+    {
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input Unused; the ability accepts no input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Abilities\Store {
+    /**
+     * Gets a snapshot of store health and environment information.
+     *
+     * @since 3.7.1
+     */
+    class HealthCheck extends \EDD\Abilities\ReadAbility
+    {
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input Unused; the ability accepts no input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Reads a curated, read-only subset of store configuration.
+     *
+     * Only a fixed allow-list of settings is ever returned; the raw settings
+     * array is never exposed.
+     *
+     * @since 3.7.1
+     */
+    class Settings extends \EDD\Abilities\ReadAbility
+    {
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input Unused; the ability accepts no input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+    /**
+     * Reads the store tax configuration and rates.
+     *
+     * @since 3.7.1
+     */
+    class TaxRates extends \EDD\Abilities\ReadAbility
+    {
+        /**
+         * Reads the store data the ability describes.
+         *
+         * @since 3.7.1
+         *
+         * @param array $input The validated input.
+         * @return array|\WP_Error
+         */
+        protected function read_data(array $input)
+        {
+        }
+        /**
+         * Gets the ability slug.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_slug(): string
+        {
+        }
+        /**
+         * Gets the ability label.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_label(): string
+        {
+        }
+        /**
+         * Gets the ability description.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_description(): string
+        {
+        }
+        /**
+         * Gets the capability required to run the ability.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        protected function get_capability(): string
+        {
+        }
+        /**
+         * Gets the input schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_input_schema(): array
+        {
+        }
+        /**
+         * Gets the output schema.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_output_schema(): array
+        {
+        }
+    }
+}
+namespace EDD\Actions {
+    /**
+     * Routes request values to EDD dynamic action hooks.
+     *
+     * @since 3.7.1
+     */
+    class Router
+    {
+        /**
+         * The request parameter read on the front end.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const FRONTEND_PARAM = 'edd_action';
+        /**
+         * The request parameter read in the admin.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const ADMIN_PARAM = 'edd-action';
+        /**
+         * Dispatches a front-end action.
+         *
+         * Deferred actions run on `template_redirect` and everything else on `init`, so each pass
+         * dispatches only the actions belonging to it.
+         *
+         * @since 3.7.1
+         *
+         * @param array $request           The request array, either $_GET or $_POST.
+         * @param bool  $is_deferred_pass  Whether this is the `template_redirect` pass.
+         * @return void
+         */
+        public static function frontend($request, $is_deferred_pass = false): void
+        {
+        }
+        /**
+         * Dispatches an admin action. Deferral does not apply here.
+         *
+         * @since 3.7.1
+         *
+         * @param array $request The request array, either $_GET or $_POST.
+         * @return void
+         */
+        public static function admin($request): void
+        {
+        }
+        /**
+         * Whether a hook is blocked from being dispatched by the router.
+         *
+         * @since 3.7.1
+         *
+         * @param string $hook The full hook name, including the `edd_` prefix.
+         * @return bool
+         */
+        public static function is_blocked($hook): bool
+        {
+        }
+        /**
+         * Resets the cached blocklist.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public static function reset(): void
+        {
+        }
+    }
+}
 namespace EDD {
     // @codeCoverageIgnore
     /**
@@ -12807,6 +16063,7 @@ namespace EDD\Admin\Assets {
          * Register the EDD admin scripts.
          *
          * @since 3.3.0
+         * @since 3.7.1 Registers the Chosen shim as edd-admin-chosen-compat.
          * @return void
          */
         public static function register()
@@ -15085,11 +18342,16 @@ namespace EDD\Admin\Downloads {
         /**
          * Checks the download files array to weed out empty file options.
          *
+         * A row is judged against the values the save will store, not the ones that were posted.
+         *
          * @since 3.1.0.5
-         * @param array $files
-         * @return array
+         * @since 3.7.1 Added the `$post_id` parameter, so a newly referenced attachment or file can be held to the acting user's own files.
+         *
+         * @param array $files   The submitted file rows.
+         * @param int   $post_id The download being saved.
+         * @return array|false
          */
-        public function download_files_value($files)
+        public function download_files_value($files, $post_id = 0)
         {
         }
         /**
@@ -15917,11 +19179,28 @@ namespace EDD\Admin\Emails {
     class Screen
     {
         /**
+         * The tab shown when no tab is requested.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const DEFAULT_TAB = 'general';
+        /**
          * Renders the emails screen.
          *
          * @since 3.3.0
          */
         public static function render()
+        {
+        }
+        /**
+         * Retrieves the emails screen tabs.
+         *
+         * @since 3.7.1
+         *
+         * @return array Tab slug/label pairs for the 'Emails' page.
+         */
+        public static function get_tabs()
         {
         }
         /**
@@ -16730,6 +20009,7 @@ namespace EDD\Admin\Exports\Exporters {
          *
          * @since 2.4
          * @since 3.0 Updated to add 'User Agent' column.
+         * @since 3.7.1 Updated to add 'Log ID' column.
          *
          * @return array
          */
@@ -16741,6 +20021,7 @@ namespace EDD\Admin\Exports\Exporters {
          *
          * @since 2.4
          * @since 3.0 Refactored to use new query methods.
+         * @since 3.7.1 Added 'ID', which keys each row to the log it was built from.
          *
          * @return array $data The data for the CSV file.
          */
@@ -18834,6 +22115,18 @@ namespace EDD\Admin\Menu {
         {
         }
         /**
+         * Hides the upgrades page from the Dashboard menu, leaving it reachable directly.
+         *
+         * Runs on admin_enqueue after the page title has rendered, but
+         * prior to the command palette.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public static function remove_upgrade_page_from_menu()
+        {
+        }
+        /**
          * Gets the list of EDD admin page slugs.
          *
          * @since 3.3.0
@@ -19312,6 +22605,18 @@ namespace EDD\Admin\Onboarding {
          * @return void
          */
         public function adjust_menu_item_class()
+        {
+        }
+        /**
+         * Removes the Setup menu item once onboarding has been completed.
+         *
+         * Runs on admin_enqueue after the page title has rendered, but
+         * prior to the command palette.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public function maybe_remove_menu_item()
         {
         }
         /**
@@ -21620,7 +24925,6 @@ namespace EDD\Admin\Settings {
     }
 }
 namespace EDD\Admin\Settings\Sanitize\Tabs {
-    // @codeCoverageIgnore
     /**
      * Base Section class for sanitization.
      *
@@ -21631,6 +24935,8 @@ namespace EDD\Admin\Settings\Sanitize\Tabs {
      *
      * If you need to do anything more complex, you can register a method called 'additional_processing' and do your custom processing there.
      *
+     * A value is checked against the shape its setting stores before a sanitize_{setting_key} method or additional_processing() sees it.
+     *
      * @since 3.3.3
      */
     abstract class Section
@@ -21639,10 +24945,28 @@ namespace EDD\Admin\Settings\Sanitize\Tabs {
          * Sanitize the section.
          *
          * @since 3.3.3
+         * @since 3.7.1 Each key passes through sanitize_field().
          * @param array $input The array of settings being saved for this section.
          * @return array
          */
         public static function sanitize($input)
+        {
+        }
+        /**
+         * Sanitizes one setting at the section boundary.
+         *
+         * A section reads the shapes its own fields render, in the method that names a
+         * key and in additional_processing(), so every key it receives is checked here
+         * and a value of another shape leaves the stored value in place. The key is passed to
+         * sanitize_{setting_key}() after the value, so a method declaring only the value is unaffected.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key   The setting id.
+         * @param mixed  $value The submitted value.
+         * @return mixed The empty list when nothing was checked, the kept value when the shape is wrong, the value unchanged when no method names the key, otherwise the method's result.
+         */
+        public static function sanitize_field($key, $value)
         {
         }
     }
@@ -21737,10 +25061,12 @@ namespace EDD\Admin\Settings\Sanitize\Tabs\Gateways {
          * Sanitize the empty cart preview message.
          *
          * @since 3.6.2
-         * @param string $value The value to sanitize.
-         * @return string The sanitized value.
+         * @since 3.7.1 A value that is not a single message leaves the stored one in place.
+         * @param mixed  $value The value to sanitize.
+         * @param string $key   The setting id.
+         * @return string|array The sanitized value, or the value the setting keeps.
          */
-        protected static function sanitize_empty_cart_preview($value)
+        protected static function sanitize_empty_cart_preview($value, $key)
         {
         }
     }
@@ -21801,6 +25127,7 @@ namespace EDD\Admin\Settings\Sanitize\Tabs\Gateways {
          * Sanitize the gateways tab main section.
          *
          * @since 3.3.3
+         * @since 3.7.1 A default is kept only alongside a list of enabled gateways.
          *
          * @param array $input The array of settings for the settings tab.
          * @return array
@@ -21832,6 +25159,31 @@ namespace EDD\Admin\Settings\Sanitize\Tabs\General {
     }
 }
 namespace EDD\Admin\Settings\Sanitize\Tabs\Misc {
+    /**
+     * Sanitizes the Purchase Buttons section.
+     *
+     * @since 3.7.1
+     */
+    class ButtonText extends \EDD\Admin\Settings\Sanitize\Tabs\Section
+    {
+        /**
+         * Sanitizes the default button colors.
+         *
+         * A color that is neither a hex color nor cleared keeps the saved one and is reported.
+         *
+         * @since 3.7.1
+         *
+         * @param mixed  $value The posted colors.
+         * @param string $key   The setting id.
+         * @return array {
+         *     @type string $background The background color to store.
+         *     @type string $text       The text color to store.
+         * }
+         */
+        protected static function sanitize_button_colors($value, $key)
+        {
+        }
+    }
     /**
      * Sanitizes the File Downloads section.
      *
@@ -21928,6 +25280,13 @@ namespace EDD\Admin\Settings {
      */
     class Screen
     {
+        /**
+         * The tab shown when no tab is requested.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const DEFAULT_TAB = 'general';
         /**
          * Renders the settings screen.
          *
@@ -22916,6 +26275,72 @@ namespace EDD\Admin {
 }
 namespace EDD\Admin\Tools {
     /**
+     * AI tab.
+     *
+     * Promotes WPVibe as the recommended way to connect the store to an AI
+     * assistant, and hosts the toggle which decides whether those assistants may
+     * change store data.
+     *
+     * @since 3.7.1
+     */
+    class Ai implements \EDD\EventManagement\SubscriberInterface
+    {
+        use \EDD\Admin\Settings\Traits\AjaxToggle;
+        /**
+         * The WPVibe plugin basename.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const WPVIBE_PLUGIN = 'vibe-ai/vibe-ai.php';
+        /**
+         * The WPVibe download URL on WordPress.org.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const WPVIBE_DOWNLOAD_URL = 'https://downloads.wordpress.org/plugin/vibe-ai.latest-stable.zip';
+        /**
+         * Get the subscribed events.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public static function get_subscribed_events(): array
+        {
+        }
+        /**
+         * Get the settings this handler allows to be toggled via AJAX.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public static function get_allowed_ajax_settings(): array
+        {
+        }
+        /**
+         * Render the AI tab.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public function render(): void
+        {
+        }
+        /**
+         * Enqueue the styles and the extension manager assets.
+         *
+         * Runs on admin_enqueue_scripts so the stylesheet is in the head; enqueuing
+         * from render() prints it after the dark hero has already painted.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public function enqueue(): void
+        {
+        }
+    }
+    /**
      * Debug Log tab.
      *
      * @since 3.6.1
@@ -23253,6 +26678,7 @@ namespace EDD\Admin\Tools {
          * Setup the logs view.
          *
          * @since 3.6.4
+         * @since 3.7.1 Requires `manage_shop_settings` and refuses dispatched requests.
          *
          * @param string $type Log type.
          * @return bool True if setup successful, false otherwise.
@@ -23592,6 +27018,13 @@ namespace EDD\Admin\Tools {
      */
     class Screen
     {
+        /**
+         * The tab shown when no tab is requested.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const DEFAULT_TAB = 'general';
         /**
          * Registers the tools screen.
          *
@@ -24712,6 +28145,7 @@ namespace EDD\Blocks\Checkout {
          * Renders the checkout cart component.
          *
          * @since 3.7.0
+         * @since 3.7.1 Passes `edit_posts` explicitly to `Utility::is_block_editor()`.
          * @param array     $block_attributes The block attributes.
          * @param string    $content          The block inner content.
          * @param \WP_Block $block            The block object.
@@ -24856,11 +28290,12 @@ namespace EDD\Blocks {
          * Checks whether we are viewing content in the block editor.
          *
          * @since 3.6.0
+         * @since 3.7.1 Default capability changed to `edit_posts`.
          * @param string    $current_user_can Whether the current user needs to have a specific capability.
          * @param \WP_Block $block The block object.
-         * @return false|string
+         * @return bool
          */
-        public static function is_block_editor($current_user_can = '', $block = null)
+        public static function is_block_editor($current_user_can = 'edit_posts', $block = null)
         {
         }
         /**
@@ -25771,6 +29206,71 @@ namespace EDD\Cart\Preview {
         }
     }
 }
+namespace EDD\Cart {
+    // @codeCoverageIgnore
+    /**
+     * SavedCart class.
+     *
+     * @since 3.7.1
+     */
+    class SavedCart
+    {
+        /**
+         * SavedCart constructor.
+         *
+         * @since 3.7.1
+         *
+         * @param \EDD_Cart $cart The cart this saves and restores.
+         */
+        public function __construct(\EDD_Cart $cart)
+        {
+        }
+        /**
+         * Save Cart
+         *
+         * @since 2.7
+         * @since 3.7.1 A guest's cart token is signed with the store's own key.
+         *
+         * @return bool
+         */
+        public function save()
+        {
+        }
+        /**
+         * Restore Cart
+         *
+         * @since 2.7
+         * @since 3.7.1 A guest's cart restores through a store-signed token, rebuilt via
+         *                       `EDD_Cart::add()`. A request with nothing saved for it is refused,
+         *                       and `edd_get_cart_token` does not apply on the guest path — a
+         *                       guest's token is checked against the store's signature, a logged in
+         *                       customer's against their own user meta.
+         *
+         * @return bool|\WP_Error
+         */
+        public function restore()
+        {
+        }
+        /**
+         * Retrieve a saved cart token. Used in validating saved carts
+         *
+         * @since 2.7
+         * @return int
+         */
+        public function get_token()
+        {
+        }
+        /**
+         * Generate URL token to restore the cart via a URL
+         *
+         * @since 2.7
+         * @return int
+         */
+        public function generate_token()
+        {
+        }
+    }
+}
 namespace EDD\Checkout {
     /**
      * Accessibility class.
@@ -25919,10 +29419,27 @@ namespace EDD\Checkout {
         {
         }
         /**
+         * Registers the buyer once an order has been built.
+         *
+         * Order building returns early when it is given no order data, so a dispatch that reaches its
+         * edd_built_order call always carries that data. Requiring it here means this handler runs for
+         * an order the platform built, rather than for any order named in a hook argument.
+         *
+         * @since 3.7.1
+         *
+         * @param int   $order_id   The order ID.
+         * @param array $order_data The order data the order was built from.
+         * @return void
+         */
+        public function create_user_after_order_built($order_id, $order_data = array())
+        {
+        }
+        /**
          * Maybe registers the user.
          * Legacy method from the original Auto Register plugin.
          *
          * @since 3.3.0
+         * @since 3.7.1 $order_id must be numeric; an object or array is refused.
          * @param int $order_id The order ID.
          * @return void
          */
@@ -25944,12 +29461,13 @@ namespace EDD\Checkout {
          * This is a legacy method from the original Auto Register plugin.
          *
          * @since 3.3.0
+         * @since 3.7.1 $order_id must be numeric, and the arguments have defaults.
          * @param int   $order_id   The order ID.
          * @param array $order_data The array of order data.
          * @param array $args       The original form data.
          * @return void
          */
-        public function insert_user_during_manual_order($order_id, $order_data, $args)
+        public function insert_user_during_manual_order($order_id, $order_data = array(), $args = array())
         {
         }
         /**
@@ -25957,6 +29475,7 @@ namespace EDD\Checkout {
          * This is a legacy method from the original Auto Register plugin.
          *
          * @since 3.3.0
+         * @since 3.7.1 $order_id must be numeric; an object or array is refused.
          * @param int $order_id   The order ID.
          * @return void
          */
@@ -26032,6 +29551,7 @@ namespace EDD\Checkout {
          * Checks if a user already exists during checkout.
          *
          * @since 3.3.5
+         * @since 3.7.1 The validated-email marker only skips the check for its own address.
          * @param mixed $user       The user object.
          * @param array $valid_data The valid data.
          * @param array $posted     The posted data.
@@ -26041,9 +29561,24 @@ namespace EDD\Checkout {
         {
         }
         /**
+         * Checks whether the AJAX email check has already validated a given address.
+         *
+         * The stored value is the address that was validated, not a boolean, so it
+         * covers that address only.
+         *
+         * @since 3.7.1
+         *
+         * @param string $email The address this request is submitting.
+         * @return bool True when the stored address matches the one submitted.
+         */
+        public static function email_is_validated($email)
+        {
+        }
+        /**
          * Checks if the email is valid and not already used.
          *
          * @since 3.3.5
+         * @since 3.7.1 Records the submitted address in the session whatever the verdict.
          * @return void|bool|\WP_Error
          */
         public function check_email_ajax()
@@ -26369,6 +29904,246 @@ namespace EDD\Checkout {
          * @return string The checkout type: 'elementor', 'block', 'shortcode', 'undetermined', or 'unknown'.
          */
         public static function get_checkout_type($post_id = null): string
+        {
+        }
+    }
+}
+namespace EDD\CommandPalette {
+    /**
+     * Assets class.
+     *
+     * @since 3.7.1
+     */
+    class Assets implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * The script handle.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const HANDLE = 'edd-admin-command-palette';
+        /**
+         * Get the events this subscriber listens to.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * Enqueue the command palette script.
+         *
+         * @since 3.7.1
+         *
+         * @return void
+         */
+        public function enqueue()
+        {
+        }
+    }
+    /**
+     * CoreSources class.
+     *
+     * The search methods are static because each is a pure lookup over its search
+     * term, called by the ability's execute callback.
+     *
+     * @since 3.7.1
+     */
+    class CoreSources implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Get the events this subscriber listens to.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * Register the EDD ability category every EDD source is grouped under.
+         *
+         * @since 3.7.1
+         *
+         * @return void
+         */
+        public function register_category()
+        {
+        }
+        /**
+         * Register EDD's core sources, then let add-ons register their own.
+         *
+         * @since 3.7.1
+         *
+         * @return void
+         */
+        public function register_sources()
+        {
+        }
+        /**
+         * Search orders by ID, order number, email or payment key.
+         *
+         * @since 3.7.1
+         *
+         * @param string $term The search term.
+         * @return array[]
+         */
+        public static function search_orders($term)
+        {
+        }
+        /**
+         * Search customers by name or email.
+         *
+         * @since 3.7.1
+         *
+         * @param string $term The search term.
+         * @return array[]
+         */
+        public static function search_customers($term)
+        {
+        }
+        /**
+         * Search discounts by code, name or description.
+         *
+         * @since 3.7.1
+         *
+         * @param string $term The search term.
+         * @return array[]
+         */
+        public static function search_discounts($term)
+        {
+        }
+        /**
+         * Search downloads by title.
+         *
+         * @since 3.7.1
+         *
+         * @param string $term The search term.
+         * @return array[]
+         */
+        public static function search_downloads($term)
+        {
+        }
+    }
+    /**
+     * Loader class.
+     *
+     * @since 3.7.1
+     */
+    class Loader extends \EDD\EventManagement\MiniManager
+    {
+        /**
+         * Get the event classes.
+         *
+         * @since 3.7.1
+         *
+         * @return array
+         */
+        protected function get_event_classes(): array
+        {
+        }
+    }
+    /**
+     * Navigation class.
+     *
+     * @since 3.7.1
+     */
+    class Navigation
+    {
+        /**
+         * Get the static navigation commands the current user can access.
+         *
+         * @since 3.7.1
+         *
+         * @return array[] Each command is an array with 'name', 'label', 'url' and 'keywords' keys,
+         *                 plus 'searchLabel' where the command is matched on something other than its label.
+         */
+        public function get()
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Registry class.
+     *
+     * @since 3.7.1
+     */
+    class Registry
+    {
+        /**
+         * The ability category EDD's sources are registered under.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const CATEGORY = 'edd-commerce';
+        /**
+         * The ability meta key marking an ability as a command palette source.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const META_SOURCE = 'edd_command_palette';
+        /**
+         * The ability meta key marking a source as a strong match for numeric searches.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const META_NUMERIC = 'edd_command_palette_numeric';
+        /**
+         * Whether the Abilities API needed to register sources is available.
+         *
+         * @since 3.7.1
+         *
+         * @return bool
+         */
+        public static function is_supported()
+        {
+        }
+        /**
+         * Register a command palette search source.
+         *
+         * Call this on the `edd/command_palette/register_sources` action, which only
+         * fires when the Abilities API is available.
+         *
+         * @since 3.7.1
+         *
+         * @param string $name The namespaced ability name (e.g. 'edd/search-orders').
+         * @param array  $args {
+         *     Source arguments.
+         *
+         *     @type string   $label           Required. Human-readable label for the source, shown as a
+         *                                     search hint on each of its results.
+         *     @type string   $capability      Required. Capability required to search this source.
+         *     @type callable $search_callback Required. Receives the search term and returns an array
+         *                                     of results, each an array with 'label' and 'url' keys.
+         *     @type string   $description     Optional. Description of the ability for the Abilities API.
+         *     @type string   $category        Optional. Ability category slug. Defaults to 'edd-commerce'.
+         *     @type bool     $numeric         Optional. Whether this source is a strong match for numeric
+         *                                     searches (e.g. orders). Numeric sources are surfaced first
+         *                                     for numeric queries and last otherwise. Default false.
+         * }
+         * @return \WP_Ability|null The registered ability, or null on failure / unsupported WordPress.
+         */
+        public static function register($name, $args = array())
+        {
+        }
+        /**
+         * Get every registered command palette search source.
+         *
+         * Accessing the abilities registry triggers the `wp_abilities_api_init`
+         * action, so all sources (core and add-on) are registered on first call.
+         *
+         * @since 3.7.1
+         *
+         * @return \WP_Ability[] Ability instances keyed by ability name.
+         */
+        public static function get_sources()
         {
         }
     }
@@ -27713,12 +31488,27 @@ namespace EDD\Cron\Components {
         {
         }
         /**
+         * Hooks this component subscribes to which are not scheduled events.
+         *
+         * Everything a component subscribes to is wired behind a cron context check. A component
+         * which also listens to a hook that has to run on a normal page load names it here.
+         *
+         * @since 3.7.1
+         *
+         * @return array Hook names to wire without the cron context check.
+         */
+        public static function get_request_time_events(): array
+        {
+        }
+        /**
          * Get the events that this class is subscribed to.
          *
          * @note Due to the nature of the EventManager, we have to call this directly as there is a limitation that does not allow
          * a class that implements the SubscriberInterface to load another class that implements the SubscriberInterface.
          *
          * @since 3.3.0
+         * @since 3.7.1 Callbacks are wired through the Cron EventManager, so a component
+         *                       method can only be invoked from a cron, Action Scheduler or WP-CLI context.
          *
          * @return void
          */
@@ -27814,6 +31604,18 @@ namespace EDD\Cron\Components {
          * @since 3.1
          */
         public static function get_subscribed_events(): array
+        {
+        }
+        /**
+         * The `updated_option` hook has to run on an ordinary request.
+         *
+         * It is how a settings save in the admin reschedules the summary. It only schedules the
+         * event, it never sends the email, so it is not one of the jobs the guard exists to protect.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public static function get_request_time_events(): array
         {
         }
         /**
@@ -27997,12 +31799,27 @@ namespace EDD\Cron\Components {
         {
         }
         /**
+         * The `init` hook has to run on an ordinary request.
+         *
+         * Registration is not the work: it adds the per-log-type listeners, which are themselves
+         * guarded below. Under Action Scheduler `init` fires before `action_scheduler_before_execute`,
+         * so guarding it would leave the listeners unregistered when a job ran.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public static function get_request_time_events(): array
+        {
+        }
+        /**
          * Register pruning hooks for enabled log types.
          *
          * Called on `init` to ensure text domains are loaded and settings are available.
          * Only registers hooks for log types that have pruning enabled.
          *
          * @since 3.6.4
+         * @since 3.7.1 The registered listeners are wrapped in a cron context check.
+         *
          * @return void
          */
         public function register_pruning_hooks()
@@ -28148,6 +31965,16 @@ namespace EDD\Cron\Components {
         public function mark_abandoned_orders()
         {
         }
+        /**
+         * Gives back discount uses held by unpaid PayPal orders left pending for over an hour.
+         *
+         * @since 3.7.2
+         *
+         * @return void
+         */
+        public function release_expired_discount_claims()
+        {
+        }
     }
     // @codeCoverageIgnore
     /**
@@ -28284,6 +32111,184 @@ namespace EDD\Cron\Components {
          * @return void
          */
         public function check_license()
+        {
+        }
+    }
+}
+namespace EDD\EventManagement {
+    class PluginAPIManager
+    {
+        /**
+         * Adds a callback to a specific hook of the WordPress plugin API.
+         *
+         * @uses add_filter()
+         *
+         * @param string   $hook_name
+         * @param callable $callback
+         * @param int      $priority
+         * @param int      $accepted_args
+         */
+        public function add_callback($hook_name, $callback, $priority = 10, $accepted_args = 1)
+        {
+        }
+        /**
+         * Executes all the callbacks registered with the given hook.
+         *
+         * @uses do_action()
+         *
+         * @param string $hook_name
+         */
+        public function execute()
+        {
+        }
+        /**
+         * Filters the given value by applying all the changes from the callbacks
+         * registered with the given hook. Returns the filtered value.
+         *
+         * @uses apply_filters()
+         *
+         * @param string $hook_name
+         * @param mixed  $value
+         *
+         * @return mixed
+         */
+        public function filter()
+        {
+        }
+        /**
+         * Get the name of the hook that WordPress plugin API is executing. Returns
+         * false if it isn't executing a hook.
+         *
+         * @uses current_filter()
+         *
+         * @return string|bool
+         */
+        public function get_current_hook()
+        {
+        }
+        /**
+         * Checks the WordPress plugin API to see if the given hook has
+         * the given callback. The priority of the callback will be returned
+         * or false. If no callback is given will return true or false if
+         * there's any callbacks registered to the hook.
+         *
+         * @uses has_filter()
+         *
+         * @param string $hook_name
+         * @param mixed  $callback
+         *
+         * @return bool|int
+         */
+        public function has_callback($hook_name, $callback = false)
+        {
+        }
+        /**
+         * Removes the given callback from the given hook. The WordPress plugin API only
+         * removes the hook if the callback and priority match a registered hook.
+         *
+         * @uses remove_filter()
+         *
+         * @param string   $hook_name
+         * @param callable $callback
+         * @param int      $priority
+         *
+         * @return bool
+         */
+        public function remove_callback($hook_name, $callback, $priority = 10)
+        {
+        }
+    }
+    /**
+     * The WordPress event manager manages events using the WordPress plugin API.
+     */
+    class EventManager extends \EDD\EventManagement\PluginAPIManager
+    {
+        /**
+         * Add an event subscriber.
+         *
+         * The event manager registers all the hooks that the given subscriber
+         * wants to register with the WordPress Plugin API.
+         *
+         * @param SubscriberInterface $subscriber
+         */
+        public function add_subscriber(\EDD\EventManagement\SubscriberInterface $subscriber)
+        {
+        }
+        /**
+         * Remove an event subscriber.
+         *
+         * The event manager removes all the hooks that the given subscriber
+         * wants to register with the WordPress Plugin API.
+         *
+         * @param SubscriberInterface $subscriber
+         */
+        public function remove_subscriber(\EDD\EventManagement\SubscriberInterface $subscriber)
+        {
+        }
+    }
+}
+namespace EDD\Cron {
+    /**
+     * Cron EventManager Class
+     *
+     * A callback wired through here is registered as a closure, so it cannot be removed by the
+     * original callable: remove_subscriber() and has_filter() will not find it. To stop a component
+     * running, remove it with the edd_cron_components filter instead.
+     *
+     * @since 3.7.1
+     */
+    class EventManager extends \EDD\EventManagement\EventManager
+    {
+        /**
+         * Constructor.
+         *
+         * @since 3.7.1
+         *
+         * @param array $request_time_hooks Hook names which run on an ordinary page load.
+         */
+        public function __construct(array $request_time_hooks = array())
+        {
+        }
+        /**
+         * Adds a callback to a hook, wrapped in a cron context check.
+         *
+         * @since 3.7.1
+         *
+         * @param string   $hook_name     The name of the hook.
+         * @param callable $callback      The callback to register.
+         * @param int      $priority      The priority of the callback.
+         * @param int      $accepted_args The number of arguments the callback accepts.
+         * @return void
+         */
+        public function add_callback($hook_name, $callback, $priority = 10, $accepted_args = 1)
+        {
+        }
+        /**
+         * Wraps a callback so that it only runs when the request may run scheduled work.
+         *
+         * For components which register callbacks dynamically rather than through
+         * get_subscribed_events().
+         *
+         * @since 3.7.1
+         *
+         * @param callable $callback The callback to wrap.
+         * @return callable The wrapped callback.
+         */
+        public static function cron_only(callable $callback): callable
+        {
+        }
+        /**
+         * Whether the current request may run scheduled work.
+         *
+         * Deliberately stricter than edd_doing_cron(), which answers "does this request look like
+         * cron" and is used in enough places that tightening it there would have a much wider blast
+         * radius.
+         *
+         * @since 3.7.1
+         *
+         * @return bool
+         */
+        public static function is_cron_context(): bool
         {
         }
     }
@@ -28437,6 +32442,36 @@ namespace EDD\Cron\Events {
          * @var string
          */
         protected $schedule = 'daily';
+    }
+    // @codeCoverageIgnore
+    /**
+     * Schedules the hourly release of discount uses held by stale pending orders.
+     *
+     * @since 3.7.2
+     */
+    class DiscountClaimsCleanup extends \EDD\Cron\Events\Event
+    {
+        /**
+         * Hook name.
+         *
+         * @since 3.7.2
+         * @var string
+         */
+        protected $hook = 'edd/discounts/release_expired_claims';
+        /**
+         * First Run Time.
+         *
+         * @since 3.7.2
+         * @var int
+         */
+        protected $first_run = 0;
+        /**
+         * Schedule.
+         *
+         * @since 3.7.2
+         * @var string
+         */
+        protected $schedule = 'hourly';
     }
     // @codeCoverageIgnore
     /**
@@ -28943,6 +32978,21 @@ namespace EDD\Cron\Schedulers {
          */
         public function has_scheduled(string $hook, array $args = array(), string $group = ''): bool;
         /**
+         * Check if a matching action is pending (not in-progress).
+         *
+         * Unlike has_scheduled(), this only counts actions that are queued and waiting
+         * to run. An action that is currently executing is not counted, so a running
+         * batch can gate its own successor without matching itself.
+         *
+         * @since 3.7.1
+         *
+         * @param string $hook  The hook name to check.
+         * @param array  $args  Optional arguments to match.
+         * @param string $group Optional group identifier.
+         * @return bool True if a matching action is pending, false otherwise.
+         */
+        public function has_pending(string $hook, array $args = array(), string $group = ''): bool;
+        /**
          * Search for scheduled actions.
          *
          * @since 3.6.5
@@ -28952,6 +33002,23 @@ namespace EDD\Cron\Schedulers {
          * @return array Array of action IDs or objects.
          */
         public function search(array $args = array(), string $return_format = 'objects'): array;
+        /**
+         * Enqueue an action to run as soon as possible.
+         *
+         * Schedules the action for immediate execution. Unlike schedule_single(), this
+         * does not bail when a matching action already exists, so the currently
+         * in-progress action can enqueue its own successor for batch continuation.
+         * De-duplication guarantees vary by backend, so callers that need to avoid
+         * pile-up should gate on has_pending() before enqueuing.
+         *
+         * @since 3.7.1
+         *
+         * @param string $hook  The hook name to execute.
+         * @param array  $args  Optional arguments to pass to the hook.
+         * @param string $group Optional group identifier.
+         * @return bool True if the action was enqueued, false otherwise.
+         */
+        public function enqueue_async(string $hook, array $args = array(), string $group = ''): bool;
         /**
          * Check if this scheduler is available.
          *
@@ -29020,6 +33087,24 @@ namespace EDD\Cron\Schedulers {
         {
         }
         /**
+         * Enqueue an action to run as soon as possible.
+         *
+         * Action Scheduler's as_enqueue_async_action() defaults $unique to false, so it
+         * does not skip an existing match; the currently in-progress action can enqueue
+         * its own successor for batch continuation. Because there is no idempotent
+         * pre-check, callers that need to avoid pile-up should gate on has_pending() first.
+         *
+         * @since 3.7.1
+         *
+         * @param string $hook  The hook name to execute.
+         * @param array  $args  Optional arguments to pass to the hook.
+         * @param string $group Optional group identifier. Default 'edd'.
+         * @return bool True if the action was enqueued, false otherwise.
+         */
+        public function enqueue_async(string $hook, array $args = array(), string $group = ''): bool
+        {
+        }
+        /**
          * Get the next scheduled time for an event.
          *
          * @since 3.6.5
@@ -29070,6 +33155,23 @@ namespace EDD\Cron\Schedulers {
          * @return bool True if a matching action is pending or in-progress, false otherwise.
          */
         public function has_scheduled(string $hook, array $args = array(), string $group = ''): bool
+        {
+        }
+        /**
+         * Check if a matching action is pending (not in-progress).
+         *
+         * Only counts actions with the PENDING status, so an action that is currently
+         * running does not match itself. This lets an in-progress batch gate its own
+         * successor without counting the run that is enqueuing it.
+         *
+         * @since 3.7.1
+         *
+         * @param string $hook  The hook of the action.
+         * @param array  $args  Optional. Args that have been passed to the action. Default empty array.
+         * @param string $group Optional. The group the action is assigned to. Default 'edd'.
+         * @return bool True if a matching action is pending, false otherwise.
+         */
+        public function has_pending(string $hook, array $args = array(), string $group = ''): bool
         {
         }
         /**
@@ -29232,6 +33334,25 @@ namespace EDD\Cron\Schedulers {
         {
         }
         /**
+         * Enqueue an action to run as soon as possible.
+         *
+         * WP-Cron has no async queue, so this schedules a single event for the current
+         * time. WP-Cron de-duplicates on its own: wp_schedule_single_event() returns
+         * false when an identical event (same hook and args) is already scheduled within
+         * its ~10-minute window, so a duplicate is effectively skipped rather than queued
+         * twice. A caller that needs a distinct successor must vary the args.
+         *
+         * @since 3.7.1
+         *
+         * @param string $hook  The hook name to execute.
+         * @param array  $args  Optional arguments to pass to the hook.
+         * @param string $group Optional group identifier (unused in WP-Cron).
+         * @return bool True if the event was scheduled, false otherwise.
+         */
+        public function enqueue_async(string $hook, array $args = array(), string $group = ''): bool
+        {
+        }
+        /**
          * Get the next scheduled time for an event.
          *
          * @since 3.6.5
@@ -29281,6 +33402,22 @@ namespace EDD\Cron\Schedulers {
          * @return bool True if a matching action is pending or in-progress, false otherwise.
          */
         public function has_scheduled(string $hook, array $args = array(), string $group = ''): bool
+        {
+        }
+        /**
+         * Check if a matching action is pending (not in-progress).
+         *
+         * WP-Cron has no in-progress state, so a scheduled event with matching hook and
+         * exact args is always considered pending.
+         *
+         * @since 3.7.1
+         *
+         * @param string $hook  The hook name to check.
+         * @param array  $args  Optional arguments to match.
+         * @param string $group Optional group identifier (unused in WP-Cron).
+         * @return bool True if a matching action is pending, false otherwise.
+         */
+        public function has_pending(string $hook, array $args = array(), string $group = ''): bool
         {
         }
         /**
@@ -33437,19 +37574,19 @@ namespace EDD\Database\Schemas {
             // status.
             array('name' => 'status', 'type' => 'varchar', 'length' => '20', 'default' => 'active', 'sortable' => true, 'transition' => true),
             // name.
-            array('name' => 'name', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'name', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // address.
-            array('name' => 'address', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'address', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // address2.
-            array('name' => 'address2', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'address2', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // city.
-            array('name' => 'city', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'city', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // region.
-            array('name' => 'region', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'region', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // postal_code.
-            array('name' => 'postal_code', 'type' => 'varchar', 'length' => '32', 'default' => '', 'searchable' => true, 'sortable' => true),
+            array('name' => 'postal_code', 'type' => 'varchar', 'length' => '32', 'default' => '', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // country.
-            array('name' => 'country', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'country', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // date_created.
             array(
                 'name' => 'date_created',
@@ -33775,7 +37912,7 @@ namespace EDD\Database\Schemas {
          */
         public $columns = array(
             // id
-            array('name' => 'id', 'type' => 'bigint', 'length' => '20', 'unsigned' => true, 'extra' => 'auto_increment', 'primary' => true, 'sortable' => true),
+            array('name' => 'id', 'type' => 'bigint', 'length' => '20', 'unsigned' => true, 'extra' => 'auto_increment', 'primary' => true, 'sortable' => true, 'compare' => true),
             // product_id
             array('name' => 'product_id', 'type' => 'bigint', 'length' => '20', 'unsigned' => true, 'default' => '0', 'sortable' => true),
             // file_id
@@ -33838,7 +37975,7 @@ namespace EDD\Database\Schemas {
             // user_id
             array('name' => 'user_id', 'type' => 'bigint', 'length' => '20', 'unsigned' => true, 'default' => '0', 'sortable' => true),
             // content
-            array('name' => 'content', 'type' => 'longtext', 'default' => '', 'searchable' => true, 'in' => false, 'not_in' => false),
+            array('name' => 'content', 'type' => 'longtext', 'default' => '', 'searchable' => true, 'in' => false, 'not_in' => false, 'validate' => 'edd_sanitize_note_content'),
             // date_created
             array(
                 'name' => 'date_created',
@@ -33944,19 +38081,19 @@ namespace EDD\Database\Schemas {
             // type.
             array('name' => 'type', 'type' => 'varchar', 'length' => '20', 'default' => 'billing', 'sortable' => true, 'transition' => true),
             // name
-            array('name' => 'name', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'name', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // address
-            array('name' => 'address', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'address', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // address2
-            array('name' => 'address2', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'address2', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // city
-            array('name' => 'city', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'city', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // region
-            array('name' => 'region', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'region', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // postal_code
-            array('name' => 'postal_code', 'type' => 'varchar', 'length' => '32', 'default' => '', 'searchable' => true, 'sortable' => true),
+            array('name' => 'postal_code', 'type' => 'varchar', 'length' => '32', 'default' => '', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // country
-            array('name' => 'country', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true),
+            array('name' => 'country', 'type' => 'mediumtext', 'searchable' => true, 'sortable' => true, 'validate' => 'sanitize_text_field'),
             // date_created
             array(
                 'name' => 'date_created',
@@ -34584,6 +38721,21 @@ namespace EDD\Database {
         {
         }
         /**
+         * Empty the database table and restart its auto-increment counter.
+         *
+         * Reaches the same observable state as truncate(), and is the variant the
+         * per-class test teardown uses. It is only cheaper than TRUNCATE on a table
+         * that is empty or nearly so, as it is there: on a populated table DELETE
+         * costs more, writing undo log per row and reclaiming no tablespace.
+         *
+         * @since 3.7.1
+         *
+         * @return bool True if the table was emptied and its counter reset.
+         */
+        public function reset()
+        {
+        }
+        /**
          * Clone this database table.
          *
          * Pair with copy().
@@ -35051,6 +39203,287 @@ namespace EDD\Deprecated {
     }
 }
 namespace EDD\Discounts {
+    /**
+     * Tracks the discount uses each order holds.
+     *
+     * An order holds a use from the moment it is built until it fails, is abandoned, canceled, deleted, trashed
+     * while pending, or sits pending past the release window. Each held use is one order meta row, written after
+     * its increment and removed before its decrement.
+     *
+     * @since 3.7.2
+     */
+    class Claims implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Order meta key prefix; the discount ID is appended.
+         *
+         * @since 3.7.2
+         * @var string
+         */
+        const META_PREFIX = '_edd_discount_claim_';
+        /**
+         * Order meta key marking that an order completed before claims were tracked no longer holds its uses as legacy ones.
+         *
+         * @since 3.7.2
+         * @var string
+         */
+        const LEGACY_RELEASED_KEY = '_edd_discount_legacy_released';
+        /**
+         * Option holding the time claims started being tracked.
+         *
+         * @since 3.7.2
+         * @var string
+         */
+        const STARTED_OPTION = 'edd_discount_claims_started';
+        /**
+         * Order statuses that give back the uses an order holds.
+         *
+         * @since 3.7.2
+         * @var string[]
+         */
+        const RELEASE_STATUSES = array('failed', 'abandoned', 'cancelled');
+        /**
+         * Order statuses in which an order completed before claims were tracked had its uses counted.
+         *
+         * @since 3.7.2
+         * @var string[]
+         */
+        const COUNTED_STATUSES = array('complete', 'publish', 'completed', 'partially_refunded', 'revoked', 'refunded', 'on_hold');
+        /**
+         * How long, in seconds, an unpaid PayPal Commerce order holds its discount uses before they may be given back.
+         *
+         * @since 3.7.2
+         * @var int
+         */
+        const STALE_AGE = HOUR_IN_SECONDS;
+        /**
+         * Gets the subscribed events.
+         *
+         * @since 3.7.2
+         * @return array
+         */
+        public static function get_subscribed_events(): array
+        {
+        }
+        /**
+         * Records when claims started being tracked, before any order can complete under them.
+         *
+         * @since 3.7.2
+         * @return void
+         */
+        public function record_start()
+        {
+        }
+        /**
+         * Releases an order's uses when it moves to a status that gives them back.
+         *
+         * A move between counted statuses turns uses counted before claims were tracked into claims, since the
+         * legacy judgment only holds for the status the order was counted in.
+         *
+         * @since 3.7.2
+         *
+         * @param string $old_status The previous status.
+         * @param string $new_status The new status.
+         * @param int    $order_id   The order ID.
+         * @return void
+         */
+        public function maybe_release($old_status, $new_status, $order_id)
+        {
+        }
+        /**
+         * Claims a use of each discount on an order that it does not already hold.
+         *
+         * Uses held for discounts no longer on the order are given back.
+         *
+         * @since 3.7.2
+         *
+         * @param \EDD\Orders\Order $order       The order.
+         * @param string            $from_status The status the order is leaving, when claiming on a status change.
+         * @return bool Whether the order now holds a use of every discount on it.
+         */
+        public static function claim($order, $from_status = ''): bool
+        {
+        }
+        /**
+         * Claims the uses a sale needs before it moves to complete.
+         *
+         * Unlike `claim()`, an order still in a status that gives uses back can claim, since it is about to complete.
+         *
+         * @since 3.7.2
+         *
+         * @param \EDD\Orders\Order $order       The order.
+         * @param string            $from_status The status the order is leaving.
+         * @return bool Whether the order can complete holding a use of every discount on it.
+         */
+        public static function claim_for_completion($order, $from_status): bool
+        {
+        }
+        /**
+         * Claims a use of each discount on a paid order that it could not claim, even past the discount's limit.
+         *
+         * @since 3.7.2
+         *
+         * @param \EDD\Orders\Order $order       The order.
+         * @param string            $from_status The status the order is leaving, when claiming on a status change.
+         * @return \EDD_Discount[] The discounts counted past their limit.
+         */
+        public static function claim_past_limit($order, $from_status = ''): array
+        {
+        }
+        /**
+         * Gives back every use an order holds.
+         *
+         * @since 3.7.2
+         *
+         * @param int    $order_id       The order ID.
+         * @param string $only_if_status Only release while the order has this status.
+         * @param string $from_status    The status the order is leaving, when releasing on a status change.
+         * @return int The number of uses given back.
+         */
+        public static function release($order_id, $only_if_status = '', $from_status = ''): int
+        {
+        }
+        /**
+         * Gives back one use of a full discount held by an unpaid order left pending past the stale age.
+         *
+         * Nothing is given back unless reaching the cap is all that refuses the discount.
+         *
+         * @since 3.7.2
+         *
+         * @param \EDD_Discount $discount The discount.
+         * @return bool Whether a use was given back.
+         */
+        public static function release_stale($discount): bool
+        {
+        }
+        /**
+         * Gets unpaid pending orders, oldest first, whose discount uses may be given back.
+         *
+         * Only PayPal Commerce orders created at PayPal qualify, because their capture claims the use again or
+         * refuses the payment. Other gateways can still complete a pending order, and an order with a recorded
+         * transaction has been paid, so both keep their uses.
+         *
+         * @since 3.7.2
+         *
+         * @param string $before      Only orders created before this GMT date.
+         * @param int    $discount_id Only orders holding a use of this discount; 0 for any discount.
+         * @param int    $limit       The most orders to return.
+         * @return int[] The order IDs.
+         */
+        public static function get_releasable_orders($before, $discount_id = 0, $limit = 100): array
+        {
+        }
+        /**
+         * Whether an order holds a use of a discount.
+         *
+         * @since 3.7.2
+         *
+         * @param int $order_id    The order ID.
+         * @param int $discount_id The discount ID.
+         * @return bool
+         */
+        public static function holds($order_id, $discount_id): bool
+        {
+        }
+        /**
+         * Whether an order holds a use of any discount.
+         *
+         * @since 3.7.2
+         *
+         * @param int $order_id The order ID.
+         * @return bool
+         */
+        public static function holds_any($order_id): bool
+        {
+        }
+        /**
+         * Gets the discounts on an order that it does not hold a use of.
+         *
+         * @since 3.7.2
+         *
+         * @param \EDD\Orders\Order $order       The order.
+         * @param string            $from_status The status the order is leaving, when checking on a status change.
+         * @return \EDD_Discount[]
+         */
+        public static function get_unclaimed($order, $from_status = ''): array
+        {
+        }
+        /**
+         * Gets the orders, among those given, that hold a use of a discount.
+         *
+         * @since 3.7.2
+         *
+         * @param int   $discount_id The discount ID.
+         * @param int[] $order_ids   The orders to look in.
+         * @return int[]
+         */
+        public static function get_holders($discount_id, $order_ids): array
+        {
+        }
+        /**
+         * Gets the order the current session would resume at checkout.
+         *
+         * @since 3.7.2
+         * @return int The order ID, or 0.
+         */
+        public static function get_resumable_order_id(): int
+        {
+        }
+    }
+    /**
+     * Puts a paid order on hold instead of completing it when one of its discounts has no use left.
+     *
+     * The store decides: completing the held order from the admin counts the use past the discount's limit.
+     *
+     * @since 3.7.2
+     */
+    class CompletionHold implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Order meta key marking an order held because a discount had no use left.
+         *
+         * @since 3.7.2
+         * @var string
+         */
+        const META_KEY = '_edd_discount_completion_held';
+        /**
+         * Gets the subscribed events.
+         *
+         * @since 3.7.2
+         * @return array
+         */
+        public static function get_subscribed_events(): array
+        {
+        }
+        /**
+         * Holds an order moving to complete when it can't claim a use of every discount on it.
+         *
+         * Both `edd_update_order_status()` and `EDD_Payment::update_status()` apply this filter, so it covers every way an
+         * order is completed; `edd_should_update_order_status` runs only in the first.
+         *
+         * @since 3.7.2
+         *
+         * @param bool        $do_change  Whether the status should change.
+         * @param int         $order_id   The order ID.
+         * @param string      $new_status The new status.
+         * @param string|bool $old_status The previous status.
+         * @return bool
+         */
+        public function maybe_hold($do_change, $order_id, $new_status, $old_status)
+        {
+        }
+        /**
+         * Whether an order is on hold because a discount had no use left.
+         *
+         * @since 3.7.2
+         *
+         * @param int $order_id The order ID.
+         * @return bool
+         */
+        public static function holds($order_id): bool
+        {
+        }
+    }
     // @codeCoverageIgnore
     /**
      * Class ItemAmount.
@@ -35085,6 +39518,207 @@ namespace EDD\Discounts {
         }
     }
     /**
+     * Records which discounts were set inactive on purpose rather than by reaching their cap.
+     *
+     * Reaching the cap deactivates a code without a status transition. A transition to inactive at the cap is
+     * ambiguous, so only the admin deactivation actions mark a code that is already full.
+     *
+     * @since 3.7.2
+     */
+    class ManualDeactivation implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Adjustment meta key marking a discount set inactive on purpose.
+         *
+         * @since 3.7.2
+         * @var string
+         */
+        const META_KEY = 'deactivated_manually';
+        /**
+         * Gets the subscribed events.
+         *
+         * @since 3.7.2
+         * @return array
+         */
+        public static function get_subscribed_events(): array
+        {
+        }
+        /**
+         * Marks a discount set inactive on purpose, and clears the mark when it leaves inactive.
+         *
+         * A discount created inactive, or set inactive at its cap, is not marked: imports, migrations and older code
+         * deactivate a code that reached its cap that way.
+         *
+         * @since 3.7.2
+         *
+         * @param string $old_status    The previous status.
+         * @param string $new_status    The new status.
+         * @param int    $adjustment_id The adjustment ID.
+         * @return void
+         */
+        public function record($old_status, $new_status, $adjustment_id)
+        {
+        }
+        /**
+         * Marks a discount as set inactive on purpose.
+         *
+         * @since 3.7.2
+         *
+         * @param int $discount_id The discount ID.
+         * @return void
+         */
+        public static function mark($discount_id)
+        {
+        }
+        /**
+         * Whether a discount was set inactive on purpose.
+         *
+         * @since 3.7.2
+         *
+         * @param int $discount_id The discount ID.
+         * @return bool
+         */
+        public static function is_manual($discount_id): bool
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Validates the discounts stored on an order.
+     *
+     * @since 3.7.2
+     */
+    class OrderValidation
+    {
+        /**
+         * Gets the codes of the discounts on an order that can no longer be applied to it.
+         *
+         * Checks the discount itself rather than the cart, so it holds for an order built in an earlier request.
+         *
+         * @since 3.7.2
+         *
+         * @param \EDD\Orders\Order $order The order.
+         * @return string[]
+         */
+        public static function get_unavailable_codes($order): array
+        {
+        }
+        /**
+         * Redeems every discount on an order, claiming any use the order doesn't hold.
+         *
+         * @since 3.7.2
+         *
+         * @param \EDD\Orders\Order $order The order.
+         * @return string[] The codes that could not be redeemed; empty when all were.
+         */
+        public static function redeem_discounts($order): array
+        {
+        }
+        /**
+         * Refuses a newly built order whose discounts can't all be redeemed.
+         *
+         * Rechecks the per-customer limit, which the claim made while building the order does not.
+         *
+         * @since 3.7.2
+         *
+         * @param int $order_id The order ID.
+         * @return string The message to show the buyer, or an empty string when the order can proceed.
+         */
+        public static function refuse_unclaimed($order_id): string
+        {
+        }
+        /**
+         * Fails an order whose discounts can't be redeemed, removes them from the cart, and records the buyer's error.
+         *
+         * @since 3.7.2
+         *
+         * @param int      $order_id The order ID.
+         * @param string[] $codes    The codes that could not be redeemed.
+         * @return string The message to show the buyer.
+         */
+        public static function refuse($order_id, array $codes): string
+        {
+        }
+        /**
+         * Whether the failed transaction page may fail an order and give back its uses.
+         *
+         * An order holding a use keeps it, and stays pending, unless its gateway rechecks discounts before taking payment.
+         * A PayPal Commerce order counts only once it was created at PayPal; one built elsewhere, such as a Recurring
+         * subscription's parent order, never reaches the capture that rechecks it.
+         *
+         * @since 3.7.2
+         *
+         * @param \EDD\Orders\Order $order The order.
+         * @return bool
+         */
+        public static function releases_on_failed_page($order): bool
+        {
+        }
+        /**
+         * Moves a pending order to processing while its payment is taken, so its uses stay claimed.
+         *
+         * @since 3.7.2
+         *
+         * @param int $order_id The order ID.
+         * @return bool Whether this request moved the order; false when it was no longer pending.
+         * @throws \Throwable An error from a status transition listener, after the order is put back to pending.
+         */
+        public static function start_capture($order_id): bool
+        {
+        }
+        /**
+         * Moves a failed order back to pending for another payment attempt.
+         *
+         * @since 3.7.2
+         *
+         * @param int $order_id The order ID.
+         * @return bool Whether this request moved the order; false when it was no longer failed.
+         * @throws \Throwable An error from a status transition listener, after the order is put back to failed.
+         */
+        public static function reopen_failed($order_id): bool
+        {
+        }
+        /**
+         * Moves an order still processing to a status, when its payment was not taken.
+         *
+         * @since 3.7.2
+         *
+         * @param int    $order_id The order ID.
+         * @param string $status   The status to move it to.
+         * @return void
+         * @throws \Throwable An error from a status transition listener, after the order is put back to processing.
+         */
+        public static function end_capture($order_id, $status)
+        {
+        }
+        /**
+         * Takes payment for a pending order while it is held in processing.
+         *
+         * Record the payment after this returns, so an error while recording leaves a paid order processing.
+         *
+         * @since 3.7.2
+         *
+         * @param int      $order_id The order ID.
+         * @param callable $pay      Takes the payment and returns PayPal's response.
+         * @return mixed The result of `$pay`, or a REST error when the order is no longer pending.
+         * @throws \Throwable An unexpected error from `$pay`, after the order is put back to pending.
+         */
+        public static function hold_capture($order_id, callable $pay)
+        {
+        }
+        /**
+         * Gets the REST error returned when an order is refused for its discounts.
+         *
+         * @since 3.7.2
+         *
+         * @param string $message The message to show the buyer.
+         * @return \WP_Error
+         */
+        public static function get_refusal_error($message): \WP_Error
+        {
+        }
+    }
+    /**
      * Discounts Search
      *
      * @since 3.3.9
@@ -35114,12 +39748,105 @@ namespace EDD\Discounts {
 namespace EDD\Downloads {
     // @codeCoverageIgnore
     /**
+     * Which of a product's files one price option may download.
+     *
+     * The rule is shared by the surfaces which list a purchase's files and by the file download
+     * boundary, so a link is only offered where it will also be honored.
+     *
+     * @since 3.7.1
+     */
+    class Entitlement
+    {
+        /**
+         * Constructor.
+         *
+         * @since 3.7.1
+         *
+         * @param int      $download_id The product ID.
+         * @param int|null $price_id    The price option this entitlement covers.
+         */
+        public function __construct($download_id, $price_id = null)
+        {
+        }
+        /**
+         * Retrieves the files this price option may download.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public function get_files()
+        {
+        }
+        /**
+         * Whether a file is withheld from this price option.
+         *
+         * Only a file the product actually has can be withheld. A key which is not in the product's
+         * list at all is not this rule's business, so it is left to whichever caller resolves it: a
+         * bundle has no files of its own, and an extension may supply a list through the
+         * `edd_download_files` filter that the product's own meta never held.
+         *
+         * @since 3.7.1
+         *
+         * @param int|string $file_key The file's key in the product's file list.
+         * @return bool
+         */
+        public function withholds_file($file_key)
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Decides whether a file row may name the attachment or file it carries.
+     *
+     * A write with no current user is programmatic, so there is no row owner to check a reference
+     * against, and a reference that names an existing attachment or file is allowed as it stands.
+     *
+     * @since 3.7.1
+     */
+    class Files
+    {
+        /**
+         * Whether the file row being saved may name the given attachment.
+         *
+         * @since 3.7.1
+         *
+         * @param int $attachment_id The attachment named by the file row.
+         * @return bool
+         */
+        public static function can_reference_attachment($attachment_id)
+        {
+        }
+        /**
+         * Whether the file row being saved may name the given file path or URL.
+         *
+         * A file this server does not read is the store's own decision. A local file is held to the
+         * attachment it resolves to; one that resolves to no attachment needs the capability to edit
+         * others' products.
+         *
+         * @since 3.7.1
+         *
+         * @param string $file The path or URL named by the file row.
+         * @return bool
+         */
+        public static function can_reference_file($file)
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
      * Downloads process class
      *
      * @since 3.3.3
      */
     class Process
     {
+        /**
+         * Schemes a requested file is served from by URL rather than read from disk.
+         *
+         * @since 3.7.1
+         * @var string[]
+         */
+        const DIRECT_URL_SCHEMES = array('http', 'https');
         /**
          * Validate a download file.
          *
@@ -35129,6 +39856,91 @@ namespace EDD\Downloads {
          * @return bool
          */
         public static function validate($file)
+        {
+        }
+        /**
+         * Work out the local path the direct delivery methods read a requested file from.
+         *
+         * On delivery this runs before any header is sent, and a file hosted elsewhere resolves nothing.
+         * The metabox save reaches it too, through local_reference(), to decide whether a value is local.
+         *
+         * edd_get_local_path_from_url() resolves overlapping URL shapes for symlink delivery; the
+         * content_url() and UPLOADS branches change in both.
+         *
+         * @since 3.7.1
+         *
+         * @param string            $requested_file The file being requested, which may be a path or a URL.
+         * @param array|false       $file_details   The requested file, as returned by parse_url().
+         * @param string|false|null $uploads        The UPLOADS constant to read, false for none; null reads the constant.
+         * @return array {
+         *     Both keys are always present.
+         *
+         *     @type string|false $path            The local path. $requested_file unchanged when
+         *                                         nothing translated it, or false when a translation
+         *                                         produced a path which does not resolve.
+         *     @type bool         $reads_from_disk Whether $path is read from disk by this server
+         *                                         rather than being a value it redirects to. True for
+         *                                         an absolute path as well as for a translated one.
+         * }
+         */
+        public static function resolve_path($requested_file, $file_details, $uploads = null)
+        {
+        }
+        /**
+         * The local value a file reference resolves to, or false when this server does not read it.
+         *
+         * A value with no scheme is a path, taken as given when absolute and resolved against the
+         * WordPress root when relative. It is local when the file is there, or when the path points
+         * into the content or uploads directory. A URL is local when path resolution translates it.
+         *
+         * @since 3.7.1
+         *
+         * @param string $file The path or URL a file row names.
+         * @return string|false The path on this server, the local URL when the file is gone, since its
+         *                      attachment is still looked up, or false when this server does not read
+         *                      the value.
+         */
+        public static function local_reference($file)
+        {
+        }
+        /**
+         * Whether a requested file may be delivered from where it points.
+         *
+         * The requested value is always checked. A local path the caller resolved it to is checked
+         * as well, since that is a different value from the one first checked.
+         *
+         * Runs where `includes/process-download.php` is loaded, which the admin save path is not.
+         *
+         * @since 3.7.1
+         *
+         * @param string      $requested_file The file being requested, a path or a URL.
+         * @param array|false $file_details   The requested file, as returned by parse_url().
+         * @param string|null $resolved_path  The local path the caller resolved the request to, if any.
+         * @return bool
+         */
+        public static function is_delivery_allowed($requested_file, $file_details, $resolved_path = null)
+        {
+        }
+        /**
+         * Whether a local file sits in a directory the store serves product files from.
+         *
+         * @since 3.7.1
+         *
+         * @param string|false $file File path.
+         * @return bool
+         */
+        public static function is_in_allowed_directory($file)
+        {
+        }
+        /**
+         * A file reference with any query string removed.
+         *
+         * @since 3.7.1
+         *
+         * @param string $file The path or URL a file row names.
+         * @return string
+         */
+        public static function without_query_string($file)
         {
         }
     }
@@ -35219,6 +40031,30 @@ namespace EDD\Downloads {
          * @return array
          */
         public function search()
+        {
+        }
+        /**
+         * Removes items which are not the caller's to see.
+         *
+         * Publicly viewable products stay visible to everyone. Anything else has to be readable by
+         * the current user, which for a product's own author includes their drafts.
+         *
+         * @since 3.7.1
+         *
+         * @param array $items The items returned by the query.
+         * @return array
+         */
+        public static function filter_by_readability($items)
+        {
+        }
+        /**
+         * Whether the current user may read every product, whatever its status or author.
+         *
+         * @since 3.7.1
+         *
+         * @return bool
+         */
+        public static function can_read_all_products()
         {
         }
         /**
@@ -35980,9 +40816,10 @@ namespace EDD\Elementor\Elements {
          * same slider toggle the monolith legacy checkout widget uses for section show/hide;
          * the editor JS listens on the box's settings change for these control ids and
          * re-seeds (ON) or removes (OFF) the section's child widget, keeping each switcher in
-         * sync with the section's actual presence. The two-column patterns still drive
-         * the box's own `flex_direction` to `row`
-         * through the now-visible native Direction control. A fresh box auto-seeds the
+         * sync with the section's actual presence. Every pattern drives the box's own
+         * `flex_direction` to `column` through the now-visible native Direction control;
+         * the two-column patterns get their side-by-side layout from an inner `row`
+         * container instead. A fresh box auto-seeds the
          * `single-column` pattern; per-pattern column widths are seeded onto the inner
          * containers by the picker.
          *
@@ -36618,6 +41455,18 @@ namespace EDD\Elementor\Utils {
          * @return bool
          */
         public static function is_container_active(): bool
+        {
+        }
+        /**
+         * Clear the static cache.
+         *
+         * Mirrors EDD\Admin\Utils\Page::clear_cache(), so a test which swaps the document without
+         * touching _elementor_data does not read the previous test's tree.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public static function clear_cache()
         {
         }
     }
@@ -39002,6 +43851,1344 @@ namespace EDD\Emails {
         }
     }
 }
+namespace EDD\Emails\Tags\Definitions {
+    // @codeCoverageIgnore
+    /**
+     * Abstract class for registered email tags.
+     *
+     * @since 3.7.1
+     */
+    abstract class Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag;
+        /**
+         * Contexts in which this tag can be used.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order');
+        /**
+         * Recipients for which this tag can be used.
+         * Null means all recipients.
+         *
+         * @since 3.7.1
+         * @var array|null
+         */
+        protected $recipients = null;
+        /**
+         * Get the tag identifier.
+         *
+         * @since 3.7.1
+         * @return string
+         */
+        final public function get_tag(): string
+        {
+        }
+        /**
+         * Get the human-readable label for this tag.
+         *
+         * @since 3.7.1
+         * @return string
+         */
+        public function get_label(): string {}
+        /**
+         * Get the description for this tag.
+         *
+         * @since 3.7.1
+         * @return string
+         */
+        public function get_description(): string {}
+        /**
+         * Render the tag output.
+         *
+         * @since 3.7.1
+         * @param int                                 $object_id    The object ID.
+         * @param mixed                               $email_object The email object (order, user, etc.).
+         * @param string|\EDD\Emails\Types\Email|null $context      The context or email object.
+         * @return string
+         */
+        public function render($object_id, $email_object = null, $context = ''): string {}
+        /**
+         * Get the contexts in which this tag can be used.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public function get_contexts(): array
+        {
+        }
+        /**
+         * Get the recipients for which this tag can be used.
+         *
+         * @since 3.7.1
+         * @return array|null
+         */
+        public function get_recipients(): ?array
+        {
+        }
+        /**
+         * Converts the tag to the flat array format that Handler::add() expects.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public function to_array(): array
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Billing address email tag.
+     *
+     * @since 3.7.1
+     */
+    class BillingAddress extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'billing_address';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Company/business email tag.
+     *
+     * @since 3.7.1
+     */
+    class Company extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'company';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Purchase date email tag.
+     *
+     * @since 3.7.1
+     */
+    class Date extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'date';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Discount codes email tag.
+     *
+     * @since 3.7.1
+     */
+    class DiscountCodes extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'discount_codes';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Download list email tag.
+     *
+     * @since 3.7.1
+     */
+    class DownloadList extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'download_list';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    /**
+     * Fees list email tag.
+     *
+     * @since 3.7.1
+     */
+    class FeesList extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'fees_list';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    /**
+     * Fees total email tag.
+     *
+     * @since 3.7.1
+     */
+    class FeesTotal extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'fees_total';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * File URLs email tag.
+     *
+     * @since 3.7.1
+     */
+    class FileUrls extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'file_urls';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Full name email tag.
+     *
+     * @since 3.7.1
+     */
+    class FullName extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'fullname';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('user', 'order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * IP address email tag.
+     *
+     * @since 3.7.1
+     */
+    class IpAddress extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'ip_address';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund', 'user');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Login link email tag.
+     *
+     * @since 3.7.1
+     */
+    class LoginLink extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'login_link';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array();
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * First name email tag.
+     *
+     * @since 3.7.1
+     */
+    class Name extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'name';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('user', 'order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Order details link email tag.
+     *
+     * @since 3.7.1
+     */
+    class OrderDetailsLink extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'order_details_link';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order');
+        /**
+         * Recipients.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $recipients = array('admin');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    /**
+     * Password reset link email tag.
+     *
+     * @since 3.7.1
+     */
+    class PasswordLink extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'password_link';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'user');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Payment ID email tag.
+     *
+     * @since 3.7.1
+     */
+    class PaymentId extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'payment_id';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Payment method email tag.
+     *
+     * @since 3.7.1
+     */
+    class PaymentMethod extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'payment_method';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Phone number email tag.
+     *
+     * @since 3.7.1
+     */
+    class Phone extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'phone';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Price email tag.
+     *
+     * @since 3.7.1
+     */
+    class Price extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'price';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Receipt email tag.
+     *
+     * @since 3.7.1
+     */
+    class Receipt extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'receipt';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Receipt ID email tag.
+     *
+     * @since 3.7.1
+     */
+    class ReceiptId extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'receipt_id';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Receipt link email tag.
+     *
+     * @since 3.7.1
+     */
+    class ReceiptLink extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'receipt_link';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    /**
+     * Refund amount email tag.
+     *
+     * @since 3.7.1
+     */
+    class RefundAmount extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'refund_amount';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    /**
+     * Refund ID email tag.
+     *
+     * @since 3.7.1
+     */
+    class RefundId extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'refund_id';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Refund link email tag.
+     *
+     * @since 3.7.1
+     */
+    class RefundLink extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'refund_link';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('refund');
+        /**
+         * Recipients.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $recipients = array('admin');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Site name email tag.
+     *
+     * @since 3.7.1
+     */
+    class SiteName extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'sitename';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array();
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Subtotal email tag.
+     *
+     * @since 3.7.1
+     */
+    class Subtotal extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'subtotal';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Tax email tag.
+     *
+     * @since 3.7.1
+     */
+    class Tax extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'tax';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    /**
+     * Transaction ID email tag.
+     *
+     * @since 3.7.1
+     */
+    class TransactionId extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'transaction_id';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('order');
+        /**
+         * Recipients.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $recipients = array('admin');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * User email address email tag.
+     *
+     * @since 3.7.1
+     */
+    class UserEmail extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'user_email';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('user', 'order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Username email tag.
+     *
+     * @since 3.7.1
+     */
+    class Username extends \EDD\Emails\Tags\Definitions\Tag
+    {
+        /**
+         * Tag identifier.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        protected $tag = 'username';
+        /**
+         * Contexts.
+         *
+         * @since 3.7.1
+         * @var array
+         */
+        protected $contexts = array('user', 'order', 'refund');
+        /**
+         * {@inheritDoc}
+         */
+        public function get_label(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function get_description(): string
+        {
+        }
+        /**
+         * {@inheritDoc}
+         */
+        public function render($object_id, $email_object = null, $context = ''): string
+        {
+        }
+    }
+}
 namespace EDD\Emails\Tags {
     // @codeCoverageIgnore
     /**
@@ -39024,6 +45211,19 @@ namespace EDD\Emails\Tags {
          * @param array    $recipients  The recipients for which the email tag can be used. Added in 3.3.0.
          */
         public function add($tag, $description, $func, $label = null, $contexts = null, $recipients = null)
+        {
+        }
+        /**
+         * Register a class-based Tag object.
+         *
+         * Stores the Tag instance directly for O(1) lookup at render time,
+         * preserving full object access (methods, properties, future features).
+         *
+         * @since 3.7.1
+         *
+         * @param Definitions\Tag $tag The tag instance to register.
+         */
+        public function register(\EDD\Emails\Tags\Definitions\Tag $tag)
         {
         }
         /**
@@ -39099,6 +45299,29 @@ namespace EDD\Emails\Tags {
         {
         }
         /**
+         * Get a single class-based Tag object by name.
+         *
+         * @since 3.7.1
+         *
+         * @param string $name The tag identifier (e.g. 'sitename').
+         * @return Definitions\Tag|null The Tag instance, or null if not found.
+         */
+        public function get_tag_object(string $name): ?\EDD\Emails\Tags\Definitions\Tag
+        {
+        }
+        /**
+         * Get all class-based Tag objects, optionally filtered by context and recipient.
+         *
+         * @since 3.7.1
+         *
+         * @param string $context   The context to filter by.
+         * @param string $recipient The recipient to filter by.
+         * @return array<string, Definitions\Tag>
+         */
+        public function get_tag_objects(string $context = '', string $recipient = ''): array
+        {
+        }
+        /**
          * Returns a list of all email tags.
          * This function is deprecated, please use get() instead.
          * This has been retained for compatibility with classes which extend this class.
@@ -39121,28 +45344,40 @@ namespace EDD\Emails\Tags {
     class Registry
     {
         /**
-         * Tags constructor.
-         *
-         * @since 3.3.0
-         */
-        public function __construct()
-        {
-        }
-        /**
          * Registers the email tags.
          *
          * @since 3.3.0
+         * @since 3.7.1 Class-based tags are passed through `edd_email_tags` so that
+         *                       extensions modifying or removing a core tag continue to work.
          * @return void
          */
         public function register()
         {
         }
+        /**
+         * Get all registered tag instances.
+         *
+         * @since 3.7.1
+         * @return array<string, Definitions\Tag> Keyed by tag identifier.
+         */
+        public static function get_registered_tags(): array
+        {
+        }
+        /**
+         * Clears the cache of registered tag instances.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public static function reset()
+        {
+        }
     }
-    // @codeCoverageIgnore
     /**
      * Class Render
      *
      * @since 3.3.0
+     * @deprecated 3.7.1 Each method is now a class in EDD\Emails\Tags\Definitions.
      */
     class Render
     {
@@ -39150,6 +45385,7 @@ namespace EDD\Emails\Tags {
          * Renders the login link email tag.
          *
          * @since 3.3.0
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\LoginLink::render_deprecated_tag().
          * @return string
          */
         public function login_link()
@@ -39160,6 +45396,7 @@ namespace EDD\Emails\Tags {
          * Returns the link for new users; otherwise returns an empty string.
          *
          * @since 3.3.0
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\PasswordLink::render_deprecated_tag().
          * @param int    $object_id    The object ID.
          * @param mixed  $email_object The email object.
          * @param string $context      The context.
@@ -39172,9 +45409,10 @@ namespace EDD\Emails\Tags {
          * Renders the refund link email tag.
          *
          * @since 3.3.0
-         * @param int                            $refund_id Refund ID.
-         * @param Order                          $refund    Refund object.
-         * @param string|\EDD\Emails\Types\Email $context_or_email   Context or email object.
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\RefundLink::render_deprecated_tag().
+         * @param int                            $refund_id        Refund ID.
+         * @param Order                          $refund           Refund object.
+         * @param string|\EDD\Emails\Types\Email $context_or_email Context or email object.
          * @return string
          */
         public function refund_link($refund_id, $refund = null, $context_or_email = '')
@@ -39184,10 +45422,10 @@ namespace EDD\Emails\Tags {
          * Renders the order details link email tag.
          *
          * @since 3.3.0
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\OrderDetailsLink::render_deprecated_tag().
          * @param int    $order_id Order ID.
          * @param Order  $order    Order object.
          * @param string $context  The context.
-         *
          * @return string
          */
         public function order_details_link($order_id, $order = null, $context = '')
@@ -39197,7 +45435,7 @@ namespace EDD\Emails\Tags {
          * Renders the transaction ID email tag.
          *
          * @since 3.3.0
-         *
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\TransactionId::render_deprecated_tag().
          * @param int    $order_id Order ID.
          * @param object $order    Order object.
          * @param string $context  Context.
@@ -39210,7 +45448,7 @@ namespace EDD\Emails\Tags {
          * Renders the fees total email tag.
          *
          * @since 3.3.0
-         *
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\FeesTotal::render_deprecated_tag().
          * @param int    $order_id Order ID.
          * @param object $order    Order object.
          * @return string
@@ -39222,7 +45460,7 @@ namespace EDD\Emails\Tags {
          * Renders the fees list email tag.
          *
          * @since 3.3.0
-         *
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\FeesList::render_deprecated_tag().
          * @param int    $order_id Order ID.
          * @param object $order    Order object.
          * @return string
@@ -39234,10 +45472,11 @@ namespace EDD\Emails\Tags {
          * Retrieves the total refund amount for a given refund.
          *
          * @since 3.3.0
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\RefundAmount::render_deprecated_tag().
          * @param int                            $order_id     The ID of the order.
          * @param object|null                    $refund_order The refund order object. Default is null.
          * @param \EDD\Emails\Types\Email|string $context      The context of the refund. Default is null.
-         * @return float The refund amount.
+         * @return string
          */
         public function refund_amount($order_id, $refund_order = null, $context = null)
         {
@@ -39246,10 +45485,11 @@ namespace EDD\Emails\Tags {
          * Retrieves the refund ID for a given order.
          *
          * @since 3.3.0
-         * @param int                            $order_id     The ID of the order.
-         * @param object|null                    $refund       The refund order object. Default is null.
-         * @param \EDD\Emails\Types\Email|string $context      The context of the refund. Default is null.
-         * @return string The refund ID if found, null otherwise.
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\RefundId::render_deprecated_tag().
+         * @param int                            $order_id The ID of the order.
+         * @param object|null                    $refund   The refund order object. Default is null.
+         * @param \EDD\Emails\Types\Email|string $context  The context of the refund. Default is null.
+         * @return string
          */
         public function refund_id($order_id, $refund = null, $context = null)
         {
@@ -39258,6 +45498,7 @@ namespace EDD\Emails\Tags {
          * Renders the phone number email tag.
          *
          * @since 3.3.9
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\Phone::render_deprecated_tag().
          * @param int    $object_id    The object ID.
          * @param mixed  $email_object The email object.
          * @param string $context      The context.
@@ -39270,7 +45511,7 @@ namespace EDD\Emails\Tags {
          * Renders the company name email tag.
          *
          * @since 3.6.7
-         *
+         * @deprecated 3.7.1 Use EDD\Emails\Tags\Definitions\Company::render_deprecated_tag().
          * @param int    $object_id    The object ID.
          * @param mixed  $email_object The email object.
          * @param string $context      The context.
@@ -40818,6 +47059,7 @@ namespace EDD\Emails\Traits {
          * Send the order receipt and admin order notice.
          *
          * @since 3.2.0
+         * @since 3.7.1 Requires the order ID to be a number.
          *
          * @param int           $order_id The order ID.
          * @param Order         $order    The Order object.
@@ -40975,7 +47217,7 @@ namespace EDD\Emails {
          *
          * @return void
          */
-        public function send_new_user_email($user_id, $user_data)
+        public function send_new_user_email($user_id, $user_data = array())
         {
         }
         /**
@@ -40992,7 +47234,8 @@ namespace EDD\Emails {
          * Send the Stripe Early Fraud Warning email.
          *
          * @since 3.3.0
-         * @param EDD\Orders\Order $order The order object.
+         *
+         * @param \EDD\Orders\Order $order The order object.
          *
          * @return void
          */
@@ -42473,118 +48716,6 @@ namespace EDD\Emails\Types {
         }
     }
 }
-namespace EDD\EventManagement {
-    class PluginAPIManager
-    {
-        /**
-         * Adds a callback to a specific hook of the WordPress plugin API.
-         *
-         * @uses add_filter()
-         *
-         * @param string   $hook_name
-         * @param callable $callback
-         * @param int      $priority
-         * @param int      $accepted_args
-         */
-        public function add_callback($hook_name, $callback, $priority = 10, $accepted_args = 1)
-        {
-        }
-        /**
-         * Executes all the callbacks registered with the given hook.
-         *
-         * @uses do_action()
-         *
-         * @param string $hook_name
-         */
-        public function execute()
-        {
-        }
-        /**
-         * Filters the given value by applying all the changes from the callbacks
-         * registered with the given hook. Returns the filtered value.
-         *
-         * @uses apply_filters()
-         *
-         * @param string $hook_name
-         * @param mixed  $value
-         *
-         * @return mixed
-         */
-        public function filter()
-        {
-        }
-        /**
-         * Get the name of the hook that WordPress plugin API is executing. Returns
-         * false if it isn't executing a hook.
-         *
-         * @uses current_filter()
-         *
-         * @return string|bool
-         */
-        public function get_current_hook()
-        {
-        }
-        /**
-         * Checks the WordPress plugin API to see if the given hook has
-         * the given callback. The priority of the callback will be returned
-         * or false. If no callback is given will return true or false if
-         * there's any callbacks registered to the hook.
-         *
-         * @uses has_filter()
-         *
-         * @param string $hook_name
-         * @param mixed  $callback
-         *
-         * @return bool|int
-         */
-        public function has_callback($hook_name, $callback = false)
-        {
-        }
-        /**
-         * Removes the given callback from the given hook. The WordPress plugin API only
-         * removes the hook if the callback and priority match a registered hook.
-         *
-         * @uses remove_filter()
-         *
-         * @param string   $hook_name
-         * @param callable $callback
-         * @param int      $priority
-         *
-         * @return bool
-         */
-        public function remove_callback($hook_name, $callback, $priority = 10)
-        {
-        }
-    }
-    /**
-     * The WordPress event manager manages events using the WordPress plugin API.
-     */
-    class EventManager extends \EDD\EventManagement\PluginAPIManager
-    {
-        /**
-         * Add an event subscriber.
-         *
-         * The event manager registers all the hooks that the given subscriber
-         * wants to register with the WordPress Plugin API.
-         *
-         * @param SubscriberInterface $subscriber
-         */
-        public function add_subscriber(\EDD\EventManagement\SubscriberInterface $subscriber)
-        {
-        }
-        /**
-         * Remove an event subscriber.
-         *
-         * The event manager removes all the hooks that the given subscriber
-         * wants to register with the WordPress Plugin API.
-         *
-         * @param SubscriberInterface $subscriber
-         */
-        public function remove_subscriber(\EDD\EventManagement\SubscriberInterface $subscriber)
-        {
-        }
-    }
-}
 namespace EDD\Extensions {
     class ExtensionRegistry extends \ArrayObject
     {
@@ -42947,6 +49078,17 @@ namespace EDD\Forms\Fields {
          * @return void
          */
         public function render(): void
+        {
+        }
+        /**
+         * Get the name attribute for the field input.
+         *
+         * Fields whose submitted key differs from their DOM ID override this.
+         *
+         * @since 3.7.1
+         * @return string
+         */
+        public function get_name(): string
         {
         }
         /**
@@ -44215,6 +50357,18 @@ namespace EDD\Forms\Register {
          * @return string
          */
         public function get_id(): string
+        {
+        }
+        /**
+         * Get the name attribute for the field input.
+         *
+         * The checkout and the registration form are processed by different functions,
+         * which read different keys for the confirmation.
+         *
+         * @since 3.7.1
+         * @return string
+         */
+        public function get_name(): string
         {
         }
         /** Get the field label.
@@ -47936,6 +54090,20 @@ namespace EDD\Gateways\PayPal\V3 {
         {
         }
         /**
+         * Runs the reconcile job when it arrives as a scheduled event.
+         *
+         * ConnectSync is a SubscriberInterface listener rather than a Cron\Components\Component, so
+         * the guard in Component::subscribe() does not reach it and this entry point carries its own.
+         * reconcile() stays directly callable, so an admin action or WP-CLI can still run one.
+         *
+         * @since 3.7.1
+         *
+         * @return void
+         */
+        public function reconcile_on_cron(): void
+        {
+        }
+        /**
          * Reconciles each onboarded mode's URL and license with the Connect API.
          *
          * Daily cron worker and deferred one-off handler. For each onboarded mode it
@@ -48529,6 +54697,8 @@ namespace EDD\Gateways\PayPal\V3 {
          * cases: already logged in, new registration, login, and guest checkout.
          *
          * @since 3.6.9
+         * @since 3.7.1 Fires edd_checkout_user_error_checks and refuses when it raises an error.
+         * @since 3.7.2 Takes the discounts from the cart and refuses one that does not validate.
          *
          * @param array  $form_data  Raw form data from the REST request body.
          * @param string $email      Already-sanitized buyer email.
@@ -48584,6 +54754,21 @@ namespace EDD\Gateways\PayPal\V3 {
          * @return void
          */
         public static function record($order_id, $transaction_id)
+        {
+        }
+        /**
+         * Notes a declined capture on an order without recording it as a transaction.
+         *
+         * The order's first transaction is the capture that webhooks and refunds act on, so a declined
+         * capture must never become it.
+         *
+         * @since 3.7.2
+         *
+         * @param int    $order_id       EDD order ID.
+         * @param string $transaction_id PayPal capture ID.
+         * @return void
+         */
+        public static function record_declined($order_id, $transaction_id)
         {
         }
     }
@@ -49599,6 +55784,42 @@ namespace EDD\Gateways\Square\Checkout\Transactions {
          */
         public function process() {}
         /**
+         * Whether Square created a payment for the transaction.
+         *
+         * @since 3.7.2
+         * @return bool
+         */
+        public function has_payment(): bool
+        {
+        }
+        /**
+         * Whether a payment request was built and sent to Square for the transaction.
+         *
+         * @since 3.7.2
+         * @return bool
+         */
+        public function sent_payment_request(): bool
+        {
+        }
+        /**
+         * Gets the ID of the Square order created for the transaction.
+         *
+         * @since 3.7.2
+         * @return string The Square order ID, or an empty string when none was created.
+         */
+        public function get_square_order_id(): string
+        {
+        }
+        /**
+         * Gets the ID of the Square payment created for the transaction.
+         *
+         * @since 3.7.2
+         * @return string The Square payment ID, or an empty string when none was created.
+         */
+        public function get_payment_id(): string
+        {
+        }
+        /**
          * Get any errors.
          *
          * @since 3.4.0
@@ -49764,6 +55985,19 @@ namespace EDD\Gateways\Square {
         {
         }
     }
+}
+namespace EDD\Gateways\Square\Exceptions {
+    // @codeCoverageIgnore
+    /**
+     * Thrown when Square answers a payment request with an error, so no payment was taken.
+     *
+     * @since 3.7.2
+     */
+    class PaymentDeclined extends \Exception
+    {
+    }
+}
+namespace EDD\Gateways\Square {
     /**
      * Square Gateway Class
      *
@@ -50300,11 +56534,12 @@ namespace EDD\Gateways\Square\Helpers {
          * Create a payment.
          *
          * @since 3.4.0
+         * @since 3.7.2 Throws PaymentDeclined when Square answers with an error.
          * @param CreatePaymentRequest $request The request.
          * @param SquareOrder          $order The order.
          *
          * @return SquarePayment
-         * @throws \Exception Throws an exception if there is an error.
+         * @throws PaymentDeclined When Square answers with an error, so no payment was taken.
          */
         public static function create_payment($request, $order)
         {
@@ -50836,7 +57071,6 @@ namespace EDD\Gateways\Stripe {
     }
 }
 namespace EDD\Gateways\Stripe\Admin {
-    // @codeCoverageIgnore
     /**
      * Connect class.
      *
@@ -50844,6 +57078,16 @@ namespace EDD\Gateways\Stripe\Admin {
      */
     class Connect
     {
+        /**
+         * How long a connect state stays valid, in seconds.
+         *
+         * The state is minted when the settings page renders rather than when Connect is clicked, so
+         * this has to cover a first-time Stripe onboarding running long.
+         *
+         * @since 3.7.1
+         * @var int
+         */
+        const STATE_LIFETIME = HOUR_IN_SECONDS;
         /**
          * Check webhooks.
          *
@@ -50894,6 +57138,31 @@ namespace EDD\Gateways\Stripe\Admin {
          * @return array
          */
         public static function get_redirect_screens(): array
+        {
+        }
+        /**
+         * Builds the state value for a new Stripe Connect flow.
+         *
+         * The value carries its own proof of origin so the completion handler can confirm the flow
+         * began on this store. Nothing is persisted: the broker builds the return URL, so state is
+         * the only field that survives the round trip.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        public static function create_state(): string
+        {
+        }
+        /**
+         * Whether a returned state was built by this store, for the current user, recently enough.
+         *
+         * @since 3.7.1
+         *
+         * @param string $state State value as returned by the broker.
+         * @return bool
+         */
+        public static function is_state_valid(string $state): bool
         {
         }
         /**
@@ -51288,6 +57557,17 @@ namespace EDD\Gateways\Stripe\Checkout {
         {
         }
         /**
+         * Determine whether an intent has already been paid.
+         *
+         * @since 3.7.1
+         *
+         * @param \Stripe\PaymentIntent|\Stripe\SetupIntent $intent The Stripe Intent object.
+         * @return bool
+         */
+        public static function is_intent_paid($intent): bool
+        {
+        }
+        /**
          * Validate that the intent amount matches the expected price.
          *
          * Skips validation for SetupIntents which have no amount.
@@ -51313,6 +57593,21 @@ namespace EDD\Gateways\Stripe\Checkout {
          * @throws \EDD_Stripe_Gateway_Exception If the amounts do not match.
          */
         public static function charge_amount($charge, $expected_price)
+        {
+        }
+        /**
+         * Get the expected price for validation.
+         *
+         * Prefers the live order total. Falls back to the creation-time intent metadata
+         * total when the order total is zero, such as when Recurring zeroes a free-trial
+         * order after the intent has already been created.
+         *
+         * @since 3.7.1
+         *
+         * @param \Stripe\PaymentIntent|\Stripe\SetupIntent $intent The Stripe Intent object.
+         * @return float The expected price.
+         */
+        public static function get_expected_price($intent): float
         {
         }
         /**
@@ -54100,6 +60395,9 @@ namespace EDD\HTML {
         }
         /**
          * Get EDD products for the product dropdown.
+         *
+         * @since 3.7.1 Results are held to the same per-caller readability as the AJAX
+         *                       search that refines this same dropdown.
          *
          * @param array $args     Parameters for the get_posts function.
          * @return array WP_Post[] Array of download objects.
@@ -57161,6 +63459,16 @@ namespace EDD\Orders {
         {
         }
         /**
+         * Retrieves the order's first transaction.
+         *
+         * @since 3.7.2
+         *
+         * @return Order_Transaction|false The transaction, or false if the order has none.
+         */
+        public function get_transaction()
+        {
+        }
+        /**
          * Retrieves the tax rate Adjustment object associated with the order.
          *
          * @since 3.0
@@ -57237,6 +63545,69 @@ namespace EDD\Orders {
          * @return bool|string
          */
         public function get_recovery_url()
+        {
+        }
+        /**
+         * Gets the token which authorizes resuming this order.
+         *
+         * The order's payment key is deliberately not used for this: it also grants access to the
+         * receipt and its download links, so it does not belong in a URL which is emailed. The
+         * token is signed with the store's own key and covers both the order and its payment key,
+         * so rotating the key invalidates any recovery URL already issued.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        public function get_recovery_token(): string
+        {
+        }
+        /**
+         * Whether the supplied token authorizes resuming this order.
+         *
+         * @since 3.7.1
+         *
+         * @param string $token The token from the request.
+         * @return bool
+         */
+        public function is_recovery_token_valid($token): bool
+        {
+        }
+        /**
+         * Gets the value a receipt link carries to identify this order.
+         *
+         * Signed with the store's own key, the same as the recovery token above.
+         *
+         * @since 3.7.1
+         *
+         * @return string
+         */
+        public function get_receipt_hash(): string
+        {
+        }
+        /**
+         * Whether the supplied value is the one this order's receipt link carries.
+         *
+         * @since 3.7.1
+         *
+         * @param string $hash The value from the request.
+         * @return bool
+         */
+        public function is_receipt_hash_valid($hash): bool
+        {
+        }
+        /**
+         * The email addresses a receipt for this order may be sent to.
+         *
+         * The store owner has always been able to resend a receipt to another address belonging to
+         * the customer, so this is both the list the admin UI offers and the allow list the resend
+         * handler validates against: one definition, so the two cannot drift apart.
+         *
+         * @since 3.7.1
+         *
+         * @return array Email addresses keyed by origin: 'primary', 'order', then customer email IDs.
+         */
+        public function get_receipt_emails()
         {
         }
         /**
@@ -57724,6 +64095,20 @@ namespace EDD\Orders {
         {
         }
         /**
+         * Retrieves the files this purchased item is entitled to download.
+         *
+         * An item stored as a row records the price option it was bought at, so its files are
+         * resolved against that option. Bundle children are not rows: Order::get_items_with_bundles()
+         * and the user-downloads block build them from the bundle's own contents, where an entry
+         * naming no price option means the whole product, so those get the whole file list.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public function get_download_files()
+        {
+        }
+        /**
          * Retrieves the net total for this order item.
          *
          * @since 3.2.6
@@ -57825,6 +64210,50 @@ namespace EDD\Orders {
         {
         }
     }
+    /**
+     * Recalculations class.
+     *
+     * @since 3.7.2
+     */
+    class Recalculations implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * The cron hook that rebuilds the store earnings cache.
+         *
+         * @since 3.7.2
+         * @var string
+         */
+        const STORE_EARNINGS_HOOK = 'edd/orders/recalculate_store_earnings';
+        /**
+         * Returns an array of events that this subscriber wants to listen to.
+         *
+         * @since 3.7.2
+         * @return array
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * Invalidates the store earnings cache and schedules it to be rebuilt.
+         *
+         * @since 3.7.2
+         * @return void
+         */
+        public static function schedule_store_earnings()
+        {
+        }
+        /**
+         * Rebuilds both store earnings caches.
+         *
+         * The forced read also refreshes the legacy `edd_earnings_total` options, which otherwise refresh only through the API or the recount tool.
+         *
+         * @since 3.7.2
+         * @return void
+         */
+        public function recalculate_store_earnings()
+        {
+        }
+    }
 }
 namespace EDD\Orders\Refunds {
     // @codeCoverageIgnore
@@ -57835,6 +64264,26 @@ namespace EDD\Orders\Refunds {
      */
     class FormParser
     {
+        /**
+         * The refund form's nonce action, which is also the name of the field carrying it.
+         *
+         * @since 3.7.1
+         */
+        const NONCE_ACTION = 'edd_process_refund';
+        /**
+         * Whether the refund form payload carries a valid nonce.
+         *
+         * Both the AJAX handler and the PayPal pre-flight which runs ahead of it need this, so the
+         * field name and the action live here rather than in each caller.
+         *
+         * @since 3.7.1
+         *
+         * @param array $form_data Parsed form data from the refund submission.
+         * @return bool
+         */
+        public static function verify_nonce(array $form_data): bool
+        {
+        }
         /**
          * Parses the order-item rows out of the deserialised refund-form payload.
          *
@@ -58513,6 +64962,33 @@ namespace EDD\REST\Controllers {
         }
     }
     /**
+     * CommandPalette Controller class.
+     *
+     * @since 3.7.1
+     */
+    class CommandPalette
+    {
+        /**
+         * The maximum number of results returned per source.
+         *
+         * Enforced here, and the value EDD's own sources bound their queries to.
+         *
+         * @since 3.7.1
+         * @var int
+         */
+        const MAX_RESULTS_PER_SOURCE = 10;
+        /**
+         * Search all authorized command palette sources.
+         *
+         * @since 3.7.1
+         * @param \WP_REST_Request $request Request object.
+         * @return \WP_REST_Response
+         */
+        public function search($request)
+        {
+        }
+    }
+    /**
      * Fastlane controller class.
      *
      * Handles Fastlane card payment processing via REST API.
@@ -58539,9 +65015,11 @@ namespace EDD\REST\Controllers {
          * and completes the EDD order.
          *
          * @since 3.6.9
+         * @since 3.7.2 Fails the order before contacting PayPal when its discount uses could not be claimed.
          *
          * @param \WP_REST_Request $request Request object.
          * @return \WP_REST_Response|\WP_Error
+         * @throws \Throwable An unexpected error; the order is put back to pending unless PayPal took payment.
          */
         public function process_payment($request)
         {
@@ -58618,6 +65096,7 @@ namespace EDD\REST\Controllers {
          * runs the 3DS challenge after this returns the order ID.
          *
          * @since 3.6.9
+         * @since 3.7.2 Fails the order before contacting PayPal when its discount uses could not be claimed.
          *
          * @param \WP_REST_Request $request Request object.
          * @return \WP_REST_Response|\WP_Error
@@ -58631,9 +65110,11 @@ namespace EDD\REST\Controllers {
          * Returns true only when a required 3-D Secure challenge was attempted and failed; every other result proceeds.
          *
          * @since 3.6.9
+         * @since 3.7.2 Redeems the order's discounts before capture.
          *
          * @param \WP_REST_Request $request Request object.
          * @return \WP_REST_Response|\WP_Error
+         * @throws \Throwable An unexpected error; the order is put back to pending unless PayPal captured it.
          */
         public function capture($request)
         {
@@ -58843,6 +65324,62 @@ namespace EDD\REST\Routes {
          * @return \WP_Error Upgrade-required error.
          */
         public function restore_requires_pro()
+        {
+        }
+    }
+    /**
+     * CommandPalette class.
+     *
+     * @since 3.7.1
+     */
+    class CommandPalette extends \EDD\REST\Routes\Route
+    {
+        /**
+         * REST API base.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const BASE = 'command-palette/search';
+        /**
+         * The shortest search term the endpoint will act on.
+         *
+         * Shared with the palette script so the client stops short of a request the
+         * endpoint would only reject.
+         *
+         * @since 3.7.1
+         * @var int
+         */
+        const MIN_SEARCH_LENGTH = 2;
+        /**
+         * Constructor.
+         *
+         * @since 3.7.1
+         */
+        public function __construct()
+        {
+        }
+        /**
+         * Register routes.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public function register()
+        {
+        }
+        /**
+         * Check permission for the command palette search.
+         *
+         * The request only needs an authenticated user; each source enforces its
+         * own capability, and sources the user cannot access are skipped rather
+         * than failing the whole request.
+         *
+         * @since 3.7.1
+         * @param \WP_REST_Request $request Request object.
+         * @return bool|\WP_Error
+         */
+        public function check_permission($request)
         {
         }
     }
@@ -65500,6 +72037,76 @@ namespace EDD\Reports\Exceptions {
         }
     }
 }
+namespace EDD\Reports\Filters {
+    /**
+     * Request scoped store for resolved reports filter values.
+     *
+     * @since 3.7.1
+     */
+    class RequestCache
+    {
+        /**
+         * Builds a cache key for a scope and its arguments.
+         *
+         * @since 3.7.1
+         *
+         * @param string $scope Identifier for the value being cached, usually the calling function.
+         * @param array  $args  Optional. Arguments the value depends on. Default empty array.
+         * @return string
+         */
+        public static function key(string $scope, array $args = array()): string
+        {
+        }
+        /**
+         * Retrieves a cached value.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key Cache key.
+         * @return mixed Cached value, or null when the key has not been set.
+         */
+        public static function get(string $key)
+        {
+        }
+        /**
+         * Stores a value.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key   Cache key.
+         * @param mixed  $value Value to store.
+         * @return void
+         */
+        public static function set(string $key, $value)
+        {
+        }
+        /**
+         * Copies the date objects in a dates array.
+         *
+         * The date helpers in `includes/date-functions.php` call `setTimezone()` on the object they are
+         * given and hand back that same instance, so a shared instance would be re-zoned by the first
+         * caller that formats it for display.
+         *
+         * @since 3.7.1
+         *
+         * @param array $dates Dates array, as returned by the reports date parsers.
+         * @return array
+         */
+        public static function clone_dates(array $dates): array
+        {
+        }
+        /**
+         * Empties the store.
+         *
+         * @since 3.7.1
+         *
+         * @return void
+         */
+        public static function reset()
+        {
+        }
+    }
+}
 namespace EDD\Reports {
     /**
      * Core class that initializes the Reports API.
@@ -65761,6 +72368,8 @@ namespace EDD\Sessions {
          * Gets the customer data from the session.
          *
          * @since 3.5.0
+         * @since 3.7.1 Fills in missing keys, and a logged-in customer's own details,
+         *                       for a session that was written without going through `set()`.
          * @return array
          */
         public static function get(): array
@@ -66311,6 +72920,7 @@ namespace EDD\Sessions {
          * Starts the purchase data for a user.
          *
          * @since 3.3.5
+         * @since 3.7.1 Returns when validation has raised an error, before any data is written.
          * @param bool|null $doing_ajax Whether the request is being made via AJAX.
          * @return null|array The purchase data.
          */
@@ -66398,10 +73008,330 @@ namespace EDD\Settings\Sanitize\Types {
         /**
          * Sanitize the value.
          *
+         * Several settings are stored as one entry per line or one entry per selection, so array
+         * keys are left as they are.
+         *
+         * @since 3.3.3
+         * @since 3.7.1 An array value is sanitized entry by entry, and the setting id reaches _sanitize() for a type whose rule is per setting. A subclass that takes the whole array overrides sanitize(), which now takes the key alongside the value.
+         *
+         * @param mixed  $value The value to sanitize.
+         * @param string $key   The setting id.
+         * @return mixed
+         */
+        public static function sanitize($value, $key = '')
+        {
+        }
+    }
+}
+namespace EDD\Settings\Sanitize {
+    /**
+     * Sanitizes a setting whose declared type has no type class of its own.
+     *
+     * The class sits outside Types/ so no declared type can resolve to it.
+     *
+     * @since 3.7.1
+     */
+    class Fallback extends \EDD\Settings\Sanitize\Types\Type
+    {
+        /**
+         * Sanitize a value of an otherwise unmapped type.
+         *
+         * Newlines are preserved: several settings are documented as taking one value
+         * per line, so collapsing them would change what the store reads back.
+         *
+         * @since 3.7.1
+         *
          * @param mixed $value The value to sanitize.
          * @return mixed
          */
-        public static function sanitize($value)
+        protected static function _sanitize($value)
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Sanitizes each setting a save posted by the type it is declared with.
+     *
+     * @since 3.7.1
+     */
+    class Posted
+    {
+        /**
+         * Sanitizes every posted setting into the values on their way to the store.
+         *
+         * @since 3.7.1
+         *
+         * @global array $edd_options Array of all the EDD Options.
+         *
+         * @param array  $input         The posted settings.
+         * @param string $section_class The section class this save has already been through, if any.
+         * @return array The settings to store.
+         */
+        public static function sanitize(array $input, $section_class = '')
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Refuses a submitted setting value and reports that the saved one was kept.
+     *
+     * @since 3.7.1
+     */
+    class Refusal
+    {
+        /**
+         * Refuses a submitted value, says so in the log and on the screen, and answers with what the setting keeps.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key   The setting id.
+         * @param mixed  $value The submitted value.
+         * @return mixed The value the setting keeps.
+         */
+        public static function keep($key, $value)
+        {
+        }
+        /**
+         * Says on the screen that a submitted value could not be used.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key The setting id the notice is coded with.
+         * @return void
+         */
+        public static function notice($key)
+        {
+        }
+    }
+    /**
+     * Indexes the registered settings for the sanitizer and describes the shape each setting stores.
+     *
+     * @since 3.7.1
+     */
+    class Registry
+    {
+        /**
+         * Types stored exactly as given: stripping a character from a credential breaks the integration silently.
+         *
+         * @since 3.7.1
+         * @var string[]
+         */
+        const VERBATIM_TYPES = array('password');
+        /**
+         * Types core renders no input for, so nothing legitimate is posted under them.
+         *
+         * Named rather than read from edd_get_non_setting_types(): a type an extension adds
+         * through that filter draws its own field and keeps the value it posts.
+         *
+         * @since 3.7.1
+         * @var string[]
+         */
+        const NO_INPUT_TYPES = array('header', 'descriptive_text');
+        /**
+         * Types whose value is a list of keys rather than a single value.
+         *
+         * @since 3.7.1
+         * @var string[]
+         */
+        const ARRAY_TYPES = array('multicheck', 'gateways', 'payment_icons');
+        /**
+         * Types stored either as a single value or as one entry per line.
+         *
+         * @since 3.7.1
+         * @var string[]
+         */
+        const EITHER_SHAPE_TYPES = array('textarea');
+        /**
+         * Types core renders with a single input, so a save of that field carries one value.
+         *
+         * A type core does not render is left off this list: the shape belongs to whichever
+         * callback draws the field.
+         *
+         * @since 3.7.1
+         * @var string[]
+         */
+        const SCALAR_TYPES = array('amounttype', 'checkbox', 'checkbox_description', 'checkbox_toggle', 'color', 'color_select', 'email', 'gateway_select', 'number', 'password', 'radio', 'rich_editor', 'select', 'shop_states', 'sort_order', 'text', 'upload');
+        /**
+         * Gets the index of the registered settings.
+         *
+         * @since 3.7.1
+         *
+         * @return array The index described by build().
+         */
+        public static function get_index()
+        {
+        }
+        /**
+         * Builds the index from a set of registered settings.
+         *
+         * @since 3.7.1
+         *
+         * @param array $registered The registered settings, keyed by tab and then section.
+         * @return array {
+         *     @type array    $types       Setting id => declared type.
+         *     @type array    $names       Setting id => the label the field is rendered with.
+         *     @type array    $shapes      Setting id => 'array', 'scalar' or 'either'.
+         *     @type array    $sanitizers  Setting id => the Sanitize\Tabs section class that declares sanitize_{$id}().
+         *     @type array    $allow_html  Setting id => true for a setting registered as carrying markup.
+         *     @type string[] $sort_orders The `{$id}_order` keys a sortable setting posts alongside itself.
+         * }
+         */
+        public static function build(array $registered)
+        {
+        }
+        /**
+         * Gets the class that sanitizes a settings tab, or one of its sections.
+         *
+         * @since 3.7.1
+         *
+         * @param string $tab     The tab id.
+         * @param string $section The section id, or an empty string for the tab itself.
+         * @return string The class name, whether or not the class exists.
+         */
+        public static function get_section_class($tab, $section = '')
+        {
+        }
+        /**
+         * Gets the class that sanitizes a setting type.
+         *
+         * @since 3.7.1
+         *
+         * @param string $type The declared setting type.
+         * @return string The class name, whether or not the class exists.
+         */
+        public static function get_type_class($type)
+        {
+        }
+        /**
+         * Gets the type a setting is declared with, wherever it is declared.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key The setting id.
+         * @return string The declared type, 'sort_order' for the order a sortable setting posts, or an empty string for a key the registry does not declare.
+         */
+        public static function get_type($key)
+        {
+        }
+        /**
+         * Gets the label a setting's field is rendered with.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key The setting id.
+         * @return string The label, or an empty string for a key the registry carries no label for.
+         */
+        public static function get_name($key)
+        {
+        }
+        /**
+         * Whether a setting is registered as carrying the markup a post may carry.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key The setting id.
+         * @return bool
+         */
+        public static function allows_html($key)
+        {
+        }
+        /**
+         * Whether a value has the shape the setting stores.
+         *
+         * A setting whose shape core cannot judge accepts both, since the callback that
+         * draws the field is the only thing that knows what it posts.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key   The setting id.
+         * @param mixed  $value The submitted value.
+         * @return bool
+         */
+        public static function has_expected_shape($key, $value)
+        {
+        }
+        /**
+         * Whether a value is the marker the form sends to say a list has nothing checked.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key   The setting id.
+         * @param mixed  $value The submitted value.
+         * @return bool
+         */
+        public static function is_empty_list($key, $value)
+        {
+        }
+        /**
+         * Gets the value a setting keeps when what was submitted for it is not usable.
+         *
+         * @since 3.7.1
+         *
+         * @global array $edd_options Array of all the EDD Options.
+         *
+         * @param string $key The setting id.
+         * @return mixed What the store holds for the setting, or the empty value of its shape.
+         */
+        public static function kept_value($key)
+        {
+        }
+        /**
+         * Gets the shape a setting stores.
+         *
+         * Public because Refusal names the shape in the line it logs.
+         *
+         * @since 3.7.1
+         *
+         * @param string $key The setting id.
+         * @return string 'array', 'scalar', or 'either' for a key the index does not carry.
+         */
+        public static function get_shape($key)
+        {
+        }
+    }
+}
+namespace EDD\Settings\Sanitize\Types {
+    // @codeCoverageIgnore
+    /**
+     * Sanitizes a color setting to a hex color.
+     *
+     * @since 3.7.1
+     */
+    class Color extends \EDD\Settings\Sanitize\Types\Type
+    {
+        /**
+         * Sanitize the color setting type.
+         *
+         * The value is printed into CSS, so one that is not a hex color is stored as unset.
+         *
+         * @since 3.7.1
+         *
+         * @param string|int|float|bool $value The value to sanitize.
+         * @return string The hex color, or an empty string.
+         */
+        protected static function _sanitize($value)
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Sanitizes a color select setting to one of the button colors it offers.
+     *
+     * @since 3.7.1
+     */
+    class ColorSelect extends \EDD\Settings\Sanitize\Types\Type
+    {
+        /**
+         * Sanitize the color select setting type.
+         *
+         * The value is printed as a CSS class, so it is reduced to a key and must be one the dropdown offers.
+         *
+         * @since 3.7.1
+         *
+         * @param string|int|float|bool $value The value to sanitize.
+         * @return string The button color key, or an empty string.
+         */
+        protected static function _sanitize($value)
         {
         }
     }
@@ -66414,12 +73344,46 @@ namespace EDD\Settings\Sanitize\Types {
     class RichEditor extends \EDD\Settings\Sanitize\Types\Type
     {
         /**
-         * Sanitize the text setting type.
+         * Sanitize the rich editor setting type.
          *
          * @since 3.3.3
          *
-         * @param string $value The value to sanitize.
+         * @param string|int|float|bool $value The value to sanitize.
          *
+         * @return string
+         */
+        protected static function _sanitize($value)
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Sanitizes the comma separated key list a sortable setting posts.
+     *
+     * @since 3.7.1
+     */
+    class SortOrder extends \EDD\Settings\Sanitize\Types\Type
+    {
+        /**
+         * Sanitize the sort order setting type.
+         *
+         * The whole value is one comma separated list, so it is not walked entry by entry.
+         *
+         * @since 3.7.1
+         *
+         * @param string $value Comma separated list of keys.
+         * @param string $key   The setting id.
+         * @return string
+         */
+        public static function sanitize($value, $key = '')
+        {
+        }
+        /**
+         * Reduce the comma separated list to the keys it names.
+         *
+         * @since 3.7.1
+         *
+         * @param string $value Comma separated list of keys.
          * @return string
          */
         protected static function _sanitize($value)
@@ -66439,8 +73403,50 @@ namespace EDD\Settings\Sanitize\Types {
          *
          * @since 3.3.3
          *
-         * @param string $value The value to sanitize.
+         * @param string|int|float|bool $value The value to sanitize.
          *
+         * @return string|int|float|bool
+         */
+        protected static function _sanitize($value)
+        {
+        }
+    }
+    /**
+     * Sanitizes a textarea setting, keeping the markup only where the setting is registered to carry it.
+     *
+     * @since 3.7.1
+     */
+    class Textarea extends \EDD\Settings\Sanitize\Types\Type
+    {
+        /**
+         * Sanitize the textarea setting type.
+         *
+         * Line breaks are kept either way, since a textarea setting is often read back a line at a time.
+         *
+         * @since 3.7.1
+         *
+         * @param string|int|float|bool $value The value to sanitize.
+         * @param string                $key   The setting id.
+         * @return string
+         */
+        protected static function _sanitize($value, $key = '')
+        {
+        }
+    }
+    // @codeCoverageIgnore
+    /**
+     * Sanitizes an upload setting, which stores a URL.
+     *
+     * @since 3.7.1
+     */
+    class Upload extends \EDD\Settings\Sanitize\Types\Type
+    {
+        /**
+         * Sanitize the upload setting type.
+         *
+         * @since 3.7.1
+         *
+         * @param string|int|float|bool $value The value to sanitize.
          * @return string
          */
         protected static function _sanitize($value)
@@ -69034,6 +76040,96 @@ namespace EDD\Users\LoginLink\Verify {
 }
 namespace EDD\Users {
     /**
+     * Controls on the front-end registration handler.
+     *
+     * Registration is offered independently of WordPress's own setting, which is what the shortcode
+     * and block exist for, so these are origin and volume controls rather than a policy gate.
+     *
+     * @since 3.7.1
+     */
+    class RegistrationGuard implements \EDD\EventManagement\SubscriberInterface
+    {
+        /**
+         * Transient prefix the rate limiter keys its window on.
+         *
+         * @since 3.7.1
+         * @var string
+         */
+        const RATE_PREFIX = 'edd_register_rate';
+        /**
+         * Accounts one caller may create per window.
+         *
+         * @since 3.7.1
+         * @var int
+         */
+        const MAX_ATTEMPTS = 5;
+        /**
+         * Length of the rate limit window, in seconds.
+         *
+         * @since 3.7.1
+         * @var int
+         */
+        const WINDOW = HOUR_IN_SECONDS;
+        /**
+         * Registers the hooks this class listens on.
+         *
+         * @since 3.7.1
+         * @return array
+         */
+        public static function get_subscribed_events()
+        {
+        }
+        /**
+         * Prints the token the handler requires.
+         *
+         * Tokenized rather than a nonce so the value survives full page caching, which is what the
+         * Tokenizer exists for, and does not move on WordPress's own nonce tick.
+         *
+         * @since 3.7.1
+         * @return void
+         */
+        public static function token_fields()
+        {
+        }
+        /**
+         * Whether a submission carries a token this store issued for this form.
+         *
+         * @since 3.7.1
+         *
+         * @param array $data The submitted form data.
+         * @return bool
+         */
+        public static function has_valid_token($data)
+        {
+        }
+        /**
+         * Counts this submission against the caller's window, and reports whether it is allowed.
+         *
+         * Keyed on edd_get_ip(), matching the limiter in cart recovery. That value reads
+         * HTTP_CLIENT_IP then HTTP_X_FORWARDED_FOR before REMOTE_ADDR, so a caller who sets either
+         * header lands in a fresh window and one who sends another address can spend theirs. The
+         * identifier is tracked in issue #2385 and this surface follows whatever it settles on.
+         *
+         * Each call consumes a slot, so call it only once the submission is otherwise going to
+         * create an account.
+         *
+         * @since 3.7.1
+         * @return true|\WP_Error True when allowed, WP_Error when the window is exhausted.
+         */
+        public static function check_rate_limit()
+        {
+        }
+        /**
+         * The limiter this class counts submissions on.
+         *
+         * @since 3.7.1
+         * @return RateLimiter
+         */
+        public static function limiter()
+        {
+        }
+    }
+    /**
      * Users Search
      *
      * Handles the AJAX endpoint used by the UserSelect TomSelect/chosen field
@@ -69318,9 +76414,39 @@ namespace EDD\Utils {
     class Colors
     {
         /**
+         * Gets the stored button colors, each one a hex color or an empty string.
+         *
+         * A stored value that is not a hex color reads as unset: every consumer prints
+         * it into CSS, a localized script, or a settings field.
+         *
+         * @since 3.7.1
+         *
+         * @return array {
+         *     @type string $background The stored background color, or an empty string.
+         *     @type string $text       The stored text color, or an empty string.
+         * }
+         */
+        public static function get_stored_button_colors()
+        {
+        }
+        /**
+         * Gets the button colors a block renders with, defaulting each color that is not stored.
+         *
+         * @since 3.7.1
+         *
+         * @return array {
+         *     @type string $background The background color to render.
+         *     @type string $text       The text color to render.
+         * }
+         */
+        public static function get_block_button_colors()
+        {
+        }
+        /**
          * Get button colors.
          *
          * @since 3.5.3
+         * @since 3.7.1 Reads the stored background color only when it is a hex color.
          * @return array $css_colors Button colors.
          */
         public static function get_button_colors()
@@ -69348,6 +76474,35 @@ namespace EDD\Utils {
          * @return string Either '#ffffff' or '#000000'.
          */
         public static function get_readable_text_color($hex)
+        {
+        }
+        /**
+         * A value safe to interpolate into a declaration.
+         *
+         * Returns an empty string for anything that could end the declaration or the rule, and for any
+         * function other than those a color or length is written with. Everything else is left intact,
+         * so hex and named colors, lengths, keywords, rgb(), hsl(), var() and calc() all survive.
+         *
+         * @since 3.7.1
+         *
+         * @param string $value The submitted value.
+         * @return string
+         */
+        public static function css_value($value)
+        {
+        }
+        /**
+         * A value safe to interpolate inside a double-quoted CSS string.
+         *
+         * Escapes what would end the string and drops newlines, which a CSS string cannot carry.
+         * Everything else survives, so ordinary punctuation in a label is preserved.
+         *
+         * @since 3.7.1
+         *
+         * @param string $text The submitted text.
+         * @return string
+         */
+        public static function css_string($text)
         {
         }
         /**
@@ -70030,11 +77185,14 @@ namespace EDD\Utils {
          * Create a symbolic link to a file.
          *
          * @since 3.3.4
-         * @param string $target The target of the link.
-         * @param string $link The link to create.
+         * @since 3.7.1 Added $resolve, for a caller that has already resolved $target
+         *                       and wants it used as-is.
+         * @param string $target  The target of the link.
+         * @param string $link    The link to create.
+         * @param bool   $resolve Whether to resolve $target before creating the link.
          * @return bool True on success, false on failure.
          */
-        public static function symlink($target, $link)
+        public static function symlink($target, $link, $resolve = true)
         {
         }
         /**
@@ -70141,12 +77299,22 @@ namespace EDD\Utils {
          */
         const WRAPPER_CLASSES = array('error' => 'edd-errors', 'success' => 'edd-success', 'info' => 'edd-info', 'warn' => 'edd-warn');
         /**
+         * HTML tags allowed in message text, in wp_kses() format.
+         *
+         * Messages may intentionally contain simple inline markup (e.g. a "Reset Password"
+         * link); anything outside this list is stripped on storage and on output.
+         *
+         * @var array<string, array<string, bool>>
+         */
+        const ALLOWED_TAGS = array('a' => array('href' => true, 'title' => true, 'class' => true, 'target' => true, 'rel' => true), 'strong' => array(), 'em' => array(), 'br' => array(), 'code' => array());
+        /**
          * Add a message for a given type and code.
          *
          * @since 3.6.5
+         * @since 3.7.1 Allows the inline HTML defined in ALLOWED_TAGS instead of stripping all tags.
          * @param string $type    One of error, success, info, warn.
          * @param string $code    Unique code for the message (e.g. error_id).
-         * @param string $message Message text (will be sanitized for storage).
+         * @param string $message Message text (sanitized for storage; only ALLOWED_TAGS markup survives).
          * @return void
          */
         public static function add($type, $code, $message)
@@ -70501,7 +77669,7 @@ namespace EDD\Utils {
          * What type of request is this?
          *
          * @since 3.3.0
-         * @param  string|array $type admin, ajax, cron, cli, frontend, json, API, rest.
+         * @param  string|array $type admin, ajax, cron, cli, frontend, json, API, rest, action_scheduler.
          * @return bool
          */
         public static function is_request($type)
@@ -70915,6 +78083,19 @@ namespace EDD\Utils\Validators {
         public function get_remaining_lockout_seconds(string $identifier): int
         {
         }
+        /**
+         * Clears the current window for an identifier.
+         *
+         * The key format is an internal detail, so callers that need to start an identifier over,
+         * tests included, go through this rather than rebuilding it.
+         *
+         * @since 3.7.1
+         * @param string $identifier Same identifier used for increment/check.
+         * @return void
+         */
+        public function reset(string $identifier): void
+        {
+        }
     }
     // @codeCoverageIgnore
     /**
@@ -71113,6 +78294,7 @@ namespace EDD\Blocks\Admin\Settings {
      * Adds the EDD block button color setting to the miscellaneous section.
      *
      * @since 2.0
+     * @since 3.7.1 Registers the field under the key it posts under, and reads a stored color only when it is a hex color.
      * @param array $settings
      * @return array
      */
@@ -71783,11 +78965,12 @@ namespace EDD\Blocks\Functions {
      * Checks whether we are viewing content in the block editor.
      *
      * @since 2.0
+     * @since 3.7.1 Default capability changed to `edit_posts`.
      * @deprecated 3.6.0 in favor of \EDD\Blocks\Utility::is_block_editor()
      * @param string $current_user_can Whether the current user needs to have a specific capability.
-     * @return false|string
+     * @return bool
      */
-    function is_block_editor($current_user_can = '')
+    function is_block_editor($current_user_can = 'edit_posts')
     {
     }
     /**
@@ -71940,6 +79123,8 @@ namespace EDD\Blocks\Orders {
      * Shows the message if the current viewer doesn't have access to any order information.
      *
      * @since 2.0
+     * @since 3.7.1 A request with no receipt hash gets the expired-session message
+     *                       instead of a confirmation form that can never succeed.
      * @param EDD\Orders\Order $order
      * @return void
      */
@@ -71980,6 +79165,7 @@ namespace EDD\Blocks\Orders {
      * Gets an array of products the user has purchased.
      *
      * @since 2.0.5
+     * @since 3.7.1 The block-editor preview now requires `edit_shop_payments`.
      * @param  array The block attributes
      * @return false|array
      */
@@ -72053,6 +79239,7 @@ namespace EDD\Blocks\Styles {
      *
      * @since 2.0
      * @since 2.0.8 Enqueues the edd-blocks stylesheet.
+     * @since 3.7.1 Prints only valid hex colors.
      * @return void
      */
     function add_to_global_styles()
@@ -72062,6 +79249,7 @@ namespace EDD\Blocks\Styles {
      * Update the EDD button color class from the new color settings.
      *
      * @since 2.0
+     * @since 3.7.1 Reads a stored color only when it is a hex color.
      * @param string $class
      * @return string
      */
@@ -72575,6 +79763,7 @@ namespace EDD\Gateways\PayPal {
      * @param array $posted     Raw $_POST data.
      *
      * @since 2.11
+     * @since 3.7.1 Leaves a REST request's response to its own controller.
      * @return void
      */
     function send_ajax_errors($user, $valid_data, $posted)
@@ -72584,6 +79773,7 @@ namespace EDD\Gateways\PayPal {
      * Creates a new order in PayPal and EDD.
      *
      * @since 2.11
+     * @since 3.7.2 Fails the order before contacting PayPal when its discount uses could not be claimed.
      * @param array $purchase_data Purchase data.
      * @throws Gateway_Exception If an error occurs.
      * @return void
@@ -72595,9 +79785,24 @@ namespace EDD\Gateways\PayPal {
      * Captures the order in PayPal
      *
      * @since 2.11
+     * @since 3.7.2 Redeems the order's discounts before capture and retries a declined order.
      * @throws Gateway_Exception If an error occurs.
+     * @throws \Throwable An unexpected error; the order is put back unless PayPal captured it.
      */
     function capture_order()
+    {
+    }
+    /**
+     * Finds the order a PayPal capture request is for.
+     *
+     * Checks the order this checkout session built first, so the meta lookup only runs without one.
+     *
+     * @since 3.7.2
+     *
+     * @param string $paypal_order_id The PayPal order ID.
+     * @return \EDD\Orders\Order|false
+     */
+    function get_order_for_capture($paypal_order_id)
     {
     }
     /**
@@ -72910,8 +80115,7 @@ namespace EDD\Gateways\PayPal\IPN {
 /**
  * PayPal Commerce Refunds
  *
- * @package    easy-digital-downloads
- * @subpackage Gateways\PayPal
+ * @package    EDD\Gateways\PayPal
  * @copyright  Copyright (c) 2021, Sandhills Development, LLC
  * @license    GPL2+
  * @since      2.11
@@ -73141,10 +80345,9 @@ namespace EDD\Gateways\PayPal\Webhooks {
 /**
  * Reports API - Functions
  *
- * @package     EDD
- * @subpackage  Reports
- * @copyright   Copyright (c) 2018, Easy Digital Downloads, LLC
- * @license     http://opensource.org/licenses/gpl-2.0.php GNU Public License
+ * @package     EDD\Reports
+ * @copyright   Copyright (c) 2018, Sandhills Development, LLC
+ * @license     https://opensource.org/licenses/gpl-2.0.php GNU Public License
  * @since       3.0
  */
 namespace EDD\Reports {
@@ -73412,10 +80615,10 @@ namespace EDD\Reports {
      *
      * @since 3.0
      *
-     * @param string          $range          Optional. Range value to generate start and end dates for against `$date`.
-     *                                        Default is the current range as derived from the session.
-     * @param string          $date           Date string converted to `\EDD\Utils\Date` to anchor calculations to.
-     * @param bool            $convert_to_utc Optional. If we should convert the results to UTC for Database Queries
+     * @param string $range          Optional. Range value to generate start and end dates for against `$date`.
+     *                               Default is the current range as derived from the session.
+     * @param string $date           Date string converted to `\EDD\Utils\Date` to anchor calculations to.
+     * @param bool   $convert_to_utc Optional. If we should convert the results to UTC for Database Queries
      * @return \EDD\Utils\Date[] Array of start and end date objects.
      */
     function parse_dates_for_range($range = null, $date = 'now', $convert_to_utc = true)
@@ -73426,11 +80629,11 @@ namespace EDD\Reports {
      *
      * @since 3.1
      *
-     * @param string          $range          Optional. Range value to generate start and end dates for against `$date`.
-     * @param string          $relative_range Optional. Range value to generate relative start and end dates for against `$date`.
-     *                                        Default is the current range as derived from the session.
-     * @param string          $date           Date string converted to `\EDD\Utils\Date` to anchor calculations to.
-     * @param bool            $convert_to_utc Optional. If we should convert the results to UTC for Database Queries
+     * @param string $range          Optional. Range value to generate start and end dates for against `$date`.
+     * @param string $relative_range Optional. Range value to generate relative start and end dates for against `$date`.
+     *                               Default is the current range as derived from the session.
+     * @param string $date           Date string converted to `\EDD\Utils\Date` to anchor calculations to.
+     * @param bool   $convert_to_utc Optional. If we should convert the results to UTC for Database Queries.
      * @return \EDD\Utils\Date[] Array of start and end date objects.
      */
     function parse_relative_dates_for_range($range = null, $relative_range = null, $date = 'now', $convert_to_utc = true)
@@ -73739,7 +80942,6 @@ namespace EDD\Reports {
     }
 }
 namespace {
-    // @codeCoverageIgnore
     /**
      * Hooks EDD actions, when present in the $_GET superglobal. Every edd_action
      * present in $_GET is called using WordPress's do_action function. These
@@ -73747,7 +80949,7 @@ namespace {
      *
      * @since 1.0
      * @return void
-    */
+     */
     function edd_get_actions()
     {
     }
@@ -73758,7 +80960,7 @@ namespace {
      *
      * @since 1.0
      * @return void
-    */
+     */
     function edd_post_actions()
     {
     }
@@ -73805,7 +81007,7 @@ namespace {
      *
      * @since 2.9.4
      *
-     * @param string $action
+     * @param string $action The action to check.
      *
      * @return bool
      */
@@ -74087,6 +81289,7 @@ namespace {
      * request and running do_action() to call the function
      *
      * @since 1.0
+     * @since 3.7.1 The action is sanitized with sanitize_key() and blocked hooks are refused.
      * @return void
      */
     function edd_process_actions()
@@ -75601,6 +82804,7 @@ namespace {
      * Ensures a user doesn't try and include a product's ID in the products bundled with that product
      *
      * @since       1.6
+     * @since       3.7.1 Reject children the current user has no rights to edit.
      *
      * @param array $products Array of product IDs.
      * @return array
@@ -75869,6 +83073,7 @@ namespace {
      * Add a note via AJAX.
      *
      * @since 3.0
+     * @since 3.7.1 Note content is sanitized by edd_sanitize_note_content().
      */
     function edd_admin_ajax_add_note()
     {
@@ -75907,6 +83112,7 @@ namespace {
      * Get the HTML used to output a single note, from an array of notes
      *
      * @since 3.0
+     * @since 3.7.1 Note content is filtered before it is displayed.
      * @param int $note_id Note ID.
      *
      * @return string
@@ -76831,8 +84037,6 @@ namespace {
      * @since 1.0.8.2
      *
      * @param array $input The value inputted in the field.
-     *
-     * @global array $edd_options Array of all the EDD Options.
      *
      * @return array $input Sanitized value.
      */
@@ -78075,6 +85279,8 @@ namespace {
      *
      * @author Sunny Ratilal
      * @since 1.5
+     * @since 3.7.1 A refusal now matches the shape of "no variable prices" and uses the
+     *                       same read check the search results do.
      * @return void
      */
     function edd_check_for_download_price_variations()
@@ -78914,6 +86120,9 @@ namespace {
      * Mark payments as Failed when returning to the Failed Transaction page
      *
      * @since       1.9.9
+     * @since       3.7.2 Only fails the order the current session is checking out or just sent to the gateway,
+     *                             and keeps an order holding a discount use pending unless its gateway rechecks discounts
+     *                             before taking payment.
      * @return      void
      */
     function edd_listen_for_failed_payments()
@@ -79086,6 +86295,8 @@ namespace {
      * Gets the receipt page URI.
      *
      * @since 3.1
+     * @since 3.7.1 The hash comes from Order::get_receipt_hash(), the single definition
+     *                       every reader of this value now validates against.
      * @param int $order_id
      * @return string
      */
@@ -79924,6 +87135,16 @@ namespace {
     {
     }
     /**
+     * Return the role used to view customers.
+     *
+     * @since 3.7.1
+     *
+     * @return string Role used to view customers.
+     */
+    function edd_get_view_customers_role()
+    {
+    }
+    /**
      * Retrieve all of the IP addresses used by a customer.
      *
      * @since 3.0
@@ -80166,6 +87387,7 @@ namespace {
      * class when migrating orders from 2.9.
      *
      * @since 3.0
+     * @since 3.7.1 Address values are sanitized before they are compared or stored.
      *
      * @param int   $customer_id Customer ID.
      * @param array $data {
@@ -81702,6 +88924,17 @@ namespace {
     function edd_prevent_canonical_redirect($redirect_url, $requested_url)
     {
     }
+    /**
+     * Email template tag: billing_address
+     * The buyer's billing address
+     *
+     * @deprecated 3.7.1 Replaced with EDD\Emails\Tags\Definitions\BillingAddress.
+     * @param int $payment_id The order ID.
+     * @return string
+     */
+    function edd_email_tag_billing_address($payment_id)
+    {
+    }
     // @codeCoverageIgnore
     /**
      * Add a discount.
@@ -82264,8 +89497,10 @@ namespace {
      * @since 2.7 Updated to use EDD_Discount object.
      * @since 3.0 Updated to call edd_get_discount_by_code()
      *
+     * @since 3.7.1 Returns false when the discount had no use left to claim.
+     *
      * @param string $code Discount code to be incremented.
-     * @return int New usage.
+     * @return int|false New usage, or false if the code does not exist or is used up.
      */
     function edd_increase_discount_usage($code = '')
     {
@@ -82802,6 +90037,7 @@ namespace {
      *
      * @since 1.0
      * @since 3.0 Refactored to use new query methods.
+     * @since 3.7.1 Returns the ID of the log entry it created.
      *
      * @param int    $download_id Download ID.
      * @param int    $file_id     File ID.
@@ -82810,7 +90046,7 @@ namespace {
      * @param int    $order_id    Order ID.
      * @param int    $price_id    Optional. Price ID,
      * @param string $user_agent  Optional. User agent.
-     * @return void
+     * @return int|false ID of the file download log that was created, false on failure.
      */
     function edd_record_download_in_log($download_id = 0, $file_id = 0, $user_info = array(), $ip = '', $order_id = 0, $price_id = 0, $user_agent = '')
     {
@@ -82984,15 +90220,43 @@ namespace {
      * @since 3.0 Refactored to use new query methods.
      *            Renamed $payment_id parameter to $order_id.
      *            Set default value of $price_id to 0.
+     * @since 3.7.1 Added the $before_log_id parameter.
      *
-     * @param int $download_id Download ID.
-     * @param int $order_id    Order ID.
-     * @param int $file_id     File ID.
-     * @param int $price_id    Price ID.
+     * @param int      $download_id   Download ID.
+     * @param int      $order_id      Order ID.
+     * @param int      $file_id       File ID.
+     * @param int      $price_id      Price ID.
+     * @param int|null $before_log_id Optional. A file download log ID to count the downloads recorded
+     *                                ahead of. Default null, which counts every recorded download.
      *
      * @return bool True if at limit, false otherwise.
      */
-    function edd_is_file_at_download_limit($download_id = 0, $order_id = 0, $file_id = 0, $price_id = 0)
+    function edd_is_file_at_download_limit($download_id = 0, $order_id = 0, $file_id = 0, $price_id = 0, $before_log_id = \null)
+    {
+    }
+    /**
+     * Checks if a recorded file download is beyond the download limit for its file.
+     *
+     * The check is not a lock: the entry is counted once its insert has committed, so requests
+     * overlapping inside that window can still both pass.
+     *
+     * @since 3.7.1
+     *
+     * @param int $log_id File download log ID.
+     *
+     * @return bool True if the logged download is beyond the limit, false otherwise.
+     */
+    function edd_file_download_log_exceeds_limit($log_id)
+    {
+    }
+    /**
+     * Ends the request with the file download limit error.
+     *
+     * @since 3.7.1
+     *
+     * @return void
+     */
+    function edd_die_file_download_limit_reached()
     {
     }
     /**
@@ -83472,6 +90736,19 @@ namespace {
     {
     }
     /**
+     * Register a class-based email tag.
+     *
+     * This gives extensions a clean public API for registering class-based tags
+     * without reaching into Handler directly.
+     *
+     * @since 3.7.1
+     *
+     * @param \EDD\Emails\Tags\Definitions\Tag $tag The tag instance to register.
+     */
+    function edd_register_email_tag(\EDD\Emails\Tags\Definitions\Tag $tag)
+    {
+    }
+    /**
      * Remove an email tag
      *
      * @since 1.9
@@ -83633,17 +90910,6 @@ namespace {
     {
     }
     /**
-     * Email template tag: billing_address
-     * The buyer's billing address
-     *
-     * @param int $payment_id
-     *
-     * @return string billing_address
-     */
-    function edd_email_tag_billing_address($payment_id)
-    {
-    }
-    /**
      * Email template tag: date
      * Date of purchase
      *
@@ -83704,8 +90970,8 @@ namespace {
      * Email template tag: receipt_id
      * The unique ID number for this purchase receipt
      *
-     * @param int $payment_id
-     *
+     * @param int        $payment_id   The ID of the payment for which to retrieve the receipt ID.
+     * @param null|mixed $email_object The object of the email.
      * @return string receipt_id
      */
     function edd_email_tag_receipt_id($payment_id, $email_object = \null)
@@ -83771,7 +91037,9 @@ namespace {
      * IP address of the customer
      *
      * @since  2.3
-     * @param int $email_object_id
+     * @param int        $email_object_id The ID of the object of the email (order ID or user ID).
+     * @param null|mixed $email_object    The object of the email (order or user).
+     * @param string     $context         The context of the email (order or user).
      * @return string IP address
      */
     function edd_email_tag_ip_address($email_object_id, $email_object = \null, $context = 'order')
@@ -84360,6 +91628,7 @@ namespace {
      * the transaction in the Purchase History
      *
      * @since 1.0
+     * @since 3.7.2 Fails the order when its discount uses could not be claimed.
      * @param array $purchase_data Purchase Data.
      * @return void
      */
@@ -84390,6 +91659,7 @@ namespace {
      * Process PayPal Purchase
      *
      * @since 1.0
+     * @since 3.7.2 Fails the order before redirecting when its discount uses could not be claimed.
      * @param array $purchase_data Purchase Data.
      * @return void
      */
@@ -86198,6 +93468,18 @@ namespace {
      * @return bool True if the saved verified domain matches the current site.
      */
     function edds_apple_pay_has_domain_verification()
+    {
+    }
+    /**
+     * The host Apple Pay is registered for.
+     *
+     * Taken from the site's configured address rather than the request, since this is the hostname
+     * the gateway registers and a store has one of those however it was reached.
+     *
+     * @since 3.7.1
+     * @return string
+     */
+    function edds_apple_pay_domain()
     {
     }
     /**
@@ -88222,9 +95504,10 @@ namespace {
      *
      * @since 2.8.15
      * @since 3.0 Updated to use EDD\Orders\Order.
+     * @since 3.7.2 Guards against a non-existent order and an order without a stored IP.
      *
      * @param int $order_id Order ID.
-     * @return string A link to the IP details provider
+     * @return string A link to the IP details provider, or a translated 'N/A' when there is no order or no stored IP.
      */
     function edd_payment_get_ip_address_url($order_id)
     {
@@ -88557,6 +95840,7 @@ namespace {
      * Add a note.
      *
      * @since 3.0
+     * @since 3.7.1 Note content is sanitized by edd_sanitize_note_content().
      *
      * @param array $data {
      *     Array of note data. Default empty.
@@ -88584,6 +95868,20 @@ namespace {
      * @return int|false ID of newly created note, false on error.
      */
     function edd_add_note($data = array())
+    {
+    }
+    /**
+     * Sanitize note content.
+     *
+     * Notes support limited markup: edd_get_allowed_tags() without `img`. This is the `validate`
+     * callback on the notes table's `content` column, so it runs on every write.
+     *
+     * @since 3.7.1
+     *
+     * @param string $content Note content.
+     * @return string The note content, with any tag outside the allowed list removed.
+     */
+    function edd_sanitize_note_content($content = '')
     {
     }
     /**
@@ -88778,6 +96076,7 @@ namespace {
      * Add an order address.
      *
      * @since 3.0
+     * @since 3.7.1 Address values are sanitized before they are compared or stored.
      *
      * @param array $data {
      *     Array of order address data. Default empty.
@@ -89609,6 +96908,7 @@ namespace {
      * Delete an order.
      *
      * @since 3.0
+     * @since 3.7.2 Gives back the discount uses the order holds.
      *
      * @param int $order_id Order ID.
      * @return int|false `1` if the order was deleted successfully, false on error.
@@ -89624,6 +96924,7 @@ namespace {
      * @todo switch to _destroy_ for items & adjustments
      *
      * @since 3.0
+     * @since 3.7.2 Discount uses are given back by edd_delete_order().
      *
      * @param int $order_id Order ID.
      * @return int|false `1` if the order was deleted successfully, false on error.
@@ -89792,6 +97093,7 @@ namespace {
      * based on the order details passed by the gateway.
      *
      * @since 3.0
+     * @since 3.7.2 Claims a use of each discount on the order.
      *
      * @param array $order_data Order data.
      * @return int|bool Order ID if successful, false otherwise.
@@ -90234,6 +97536,7 @@ namespace {
      *
      * @since 1.0.8.3
      * @since 3.0 Updated to use new order methods.
+     * @since 3.7.2 Claims discount uses through EDD\Discounts\Claims.
      *
      * @param int    $order_id   Order ID.
      * @param string $new_status New order status.
@@ -90246,9 +97549,12 @@ namespace {
      * Process an attempt to complete a recoverable payment.
      *
      * @since  2.7
+     * @since 3.7.1 Requires the token from the order's recovery URL.
+     *
+     * @param array $data Optional. The request data, passed by the edd_action dispatcher.
      * @return void
      */
-    function edd_recover_payment()
+    function edd_recover_payment($data = array())
     {
     }
     /**
@@ -90967,6 +98273,7 @@ namespace {
      *
      * @since 1.4
      * @since 3.0 Updated to use the edd_notes custom table to store notes.
+     * @since 3.7.1 Note content is sanitized by edd_sanitize_note_content().
      *
      * @param int    $order_id The order ID to store a note for.
      * @param string $note     The content of the note.
@@ -91711,6 +99018,10 @@ namespace {
      *
      * If enabled, the file is symlinked to better support large file downloads
      *
+     * @since    2.5.10
+     * @since    3.7.1 The path a symlink points to is held to the same directory
+     *                          boundary as every other delivery method, and a URL with nothing
+     *                          on disk behind it is delivered without a symlink.
      * @param    string    $file
      * @param    bool      $redirect True if we should perform a header redirect instead of calling edd_readfile_chunked()
      * @return   void
@@ -91735,11 +99046,19 @@ namespace {
      *
      * Used during the symlink process to determine where to make the symlink point to
      *
+     * EDD\Downloads\Process::resolve_path() resolves overlapping URL shapes for the direct delivery
+     * methods; the content_url() and UPLOADS branches change in both.
+     *
      * @since  2.5.10
-     * @param  string $url The URL of the file requested
+     * @since  3.7.1 The UPLOADS branch returns an absolute path, matching every other
+     *                         branch here, so a caller resolving it with realpath() gets a real
+     *                         result instead of one measured from the filesystem root.
+     * @since  3.7.1 Added the $uploads parameter.
+     * @param  string            $url     The URL of the file requested
+     * @param  string|false|null $uploads The UPLOADS constant to read, false for none; null reads the constant.
      * @return string      If found to be locally hosted, the path to the file
      */
-    function edd_get_local_path_from_url($url)
+    function edd_get_local_path_from_url($url, $uploads = \null)
     {
     }
     /**
@@ -91791,6 +99110,10 @@ namespace {
      * @param array $args
      *
      * @since 3.0
+     * @since 3.7.1 A null price ID in the request only matches an order item whose own
+     *                       price ID is null, rather than any order item for the product. Also,
+     *                       $args now accepts a `file_key`. When one is passed, a directly purchased
+     *                       item grants access only to the files its price option is entitled to.
      * @return bool
      */
     function edd_order_grants_access_to_download_files($args)
@@ -91830,13 +99153,15 @@ namespace {
     {
     }
     /**
-     * Determines if a file should be allowed to be downloaded by making sure it's within the wp-content directory.
+     * Determines if a file should be allowed to be downloaded by making sure it's within a directory the store serves files from.
      *
      * @since 2.9.13
+     * @since 3.7.1 The comparison is anchored, the scheme comparison is strict, and the uploads
+     *                      directory is allowed on its own.
      *
-     * @param $file_details
-     * @param $schemas
-     * @param $requested_file
+     * @param array|false  $file_details   The parsed file, as returned by parse_url().
+     * @param array        $schemas        Schemes which are served by URL rather than from disk.
+     * @param string|false $requested_file The file being requested.
      *
      * @return boolean
      */
@@ -91872,6 +99197,7 @@ namespace {
      * used doesn't belong to a different customer.
      *
      * @since  2.6
+     * @since  3.7.1 The validated-email marker only skips the check for its own address.
      * @param array $valid_data Validated data submitted for the purchase.
      * @param array $post       Additional $_POST data submitted.
      * @return void
@@ -93456,11 +100782,11 @@ namespace {
      * Attach the customer to an existing user account when completing guest purchase.
      *
      * This only runs when a user account already exists and a guest purchase is made
-     * with the account's email address.
-     *
-     * After attaching the customer to the user ID, the account is set to pending.
+     * with the account's email address. An account still pending verification is left to
+     * `edd_connect_existing_customer_to_new_user()`, which runs when it verifies.
      *
      * @since  2.8
+     * @since  3.7.1 Defers the claim when the matched account is pending verification.
      * @param  bool   $success     True if payment was added successfully, false otherwise.
      * @param  int    $payment_id  The ID of the EDD_Payment that was added.
      * @param  int    $customer_id The ID of the EDD_Customer object.
@@ -93471,26 +100797,39 @@ namespace {
     {
     }
     /**
-     * Attach the newly created user_id to a customer, if one exists
+     * Attach the user_id to a customer for the address the account has verified, if one exists.
      *
      * @since  2.4.6
-     * @param  int $user_id The User ID that was created.
+     * @since  3.7.1 Runs when an account verifies its address, not when it is created.
+     * @param  int $user_id The ID of the user which verified the address.
      * @return void
      */
     function edd_connect_existing_customer_to_new_user($user_id)
     {
     }
     /**
-     * Looks up purchases by email that match the registering user
+     * Requires verification when a new account registers with an address that has orders.
      *
-     * This is for users that purchased as a guest and then came
-     * back and created an account.
+     * The orders are attached by `edd_claim_past_purchases_for_verified_user()`, once the
+     * account verifies the address.
      *
      * @since       1.6
-     * @param       int $user_id - the new user's ID.
+     * @since       3.7.1 Only starts verification; the orders are attached on verification.
+     * @param       int $user_id The new user's ID.
      * @return      void
      */
     function edd_add_past_purchases_to_new_user($user_id)
+    {
+    }
+    /**
+     * Attaches orders made against an address to the account which has verified it.
+     *
+     * @since 3.7.1
+     *
+     * @param int $user_id The ID of the user which verified the address.
+     * @return void
+     */
+    function edd_claim_past_purchases_for_verified_user($user_id)
     {
     }
     /**
